@@ -1,0 +1,16 @@
+# Entorno virtual de Python (regenerable con requirements.txt)
+.venv/
+
+# Estado interno de RStudio
+.Rproj.user/
+
+# Archivos de sesion de R
+.RData
+.RDataTmp
+.RDataTmp1
+.Rhistory
+
+# Temporales del sistema
+.DS_Store
+Thumbs.db
+~$*
