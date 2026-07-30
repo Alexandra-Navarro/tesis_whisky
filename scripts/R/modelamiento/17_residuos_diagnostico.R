@@ -259,11 +259,20 @@ crear_residuos <- function(predicciones) {
     ) %>%
     group_by(escenario, target, modelo) %>%
     mutate(
-      residuo_z = ifelse(
-        stats::sd(residuo, na.rm = TRUE) > 0,
-        as.numeric(scale(residuo)),
-        NA_real_
-      ),
+      # NOTA: no usar ifelse(sd(residuo) > 0, scale(residuo), NA) aqui.
+      # sd(residuo, na.rm=TRUE) > 0 es un escalar (uno por grupo), e ifelse()
+      # devuelve un resultado del mismo largo que su condicion: al ser la
+      # condicion escalar, ifelse() se queda solo con el primer elemento de
+      # scale(residuo) y dplyr lo recicla en todas las filas del grupo, dando
+      # el mismo residuo_z (y por lo tanto el mismo atipico_residual: 0% o
+      # 100%) para todas las unidades de ese modelo. Se usa if/else (no
+      # vectorizado) para que cada rama se evalúe una sola vez por grupo y
+      # el vector de residuos completo se calcule fila a fila.
+      residuo_z = if (stats::sd(residuo, na.rm = TRUE) > 0) {
+        (residuo - mean(residuo, na.rm = TRUE)) / stats::sd(residuo, na.rm = TRUE)
+      } else {
+        rep(NA_real_, dplyr::n())
+      },
       atipico_residual = !is.na(residuo_z) & abs(residuo_z) >= 2
     ) %>%
     ungroup()

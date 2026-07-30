@@ -181,11 +181,19 @@ explicar_coherencia <- function(target, familia, predictor) {
   )
 }
 
-clasificar_prioridad_variable <- function(frecuencia_media, n_modelos, coherencia, target, escenario) {
+# NOTA (fix ranking frecuencia/magnitud): antes esta funcion solo exigia
+# frecuencia_media >= 0.70 para "prioritaria", sin mirar la magnitud del
+# efecto. Eso permitia que un predictor seleccionado a menudo pero con
+# aporte casi nulo (ej. un ester de contexto con importancia normalizada
+# ~2, frente a otros con importancia ~37) quedara etiquetado como
+# "prioritaria" solo por frecuencia. Se agrega el umbral
+# importancia_norm_minmax (magnitud normalizada 0-1 dentro de cada
+# escenario/target) para que la magnitud tambien condicione la etiqueta.
+clasificar_prioridad_variable <- function(frecuencia_media, importancia_norm_minmax, n_modelos, coherencia, target, escenario) {
   case_when(
     escenario == "M_ia_exploratoria" ~ "solo_exploratoria_ia",
     target != "y_fenolico_comun" ~ "exploratoria_target_secundario",
-    frecuencia_media >= 0.70 & n_modelos >= 2 & coherencia %in% c("alta_directa", "media_indirecta", "media_contextual") ~ "prioritaria",
+    frecuencia_media >= 0.70 & importancia_norm_minmax >= 0.30 & n_modelos >= 2 & coherencia %in% c("alta_directa", "media_indirecta", "media_contextual") ~ "prioritaria",
     frecuencia_media >= 0.50 & n_modelos >= 2 ~ "apoyo_interpretativo",
     frecuencia_media >= 0.80 & n_modelos == 1 & coherencia %in% c("alta_directa", "media_indirecta") ~ "candidata_especifica_modelo",
     TRUE ~ "baja_prioridad"
@@ -286,6 +294,24 @@ consenso_variables <- estabilidad_enriquecida %>%
     justificacion_quimica = dplyr::first(justificacion_quimica),
     .groups = "drop"
   ) %>%
+  group_by(escenario, target) %>%
+  mutate(
+    # Magnitud normalizada 0-1 dentro de cada escenario/target: la escala
+    # cruda de importancia_norm_media no es comparable con frecuencia_media
+    # (esta ultima ya vive en [0,1]), asi que sin normalizar, la magnitud
+    # nunca pesaba realmente frente a la frecuencia al ordenar.
+    importancia_norm_minmax = if (n() > 1 && diff(range(importancia_norm_media, na.rm = TRUE)) > 0) {
+      (importancia_norm_media - min(importancia_norm_media, na.rm = TRUE)) /
+        (max(importancia_norm_media, na.rm = TRUE) - min(importancia_norm_media, na.rm = TRUE))
+    } else {
+      rep(0.5, dplyr::n())
+    },
+    # Puntaje combinado: promedio simple de frecuencia y magnitud, ambas ya
+    # en escala 0-1. Reporta y combina frecuencia+magnitud en lugar de
+    # ordenar solo por frecuencia (ver nota en clasificar_prioridad_variable).
+    score_combinado = (frecuencia_media + importancia_norm_minmax) / 2
+  ) %>%
+  ungroup() %>%
   mutate(
     estabilidad_consenso = case_when(
       frecuencia_media >= 0.70 & n_modelos_con_variable >= 2 ~ "alta",
@@ -296,6 +322,7 @@ consenso_variables <- estabilidad_enriquecida %>%
     ),
     prioridad_tesis = clasificar_prioridad_variable(
       frecuencia_media,
+      importancia_norm_minmax,
       n_modelos_con_variable,
       coherencia_target,
       target,
@@ -305,9 +332,8 @@ consenso_variables <- estabilidad_enriquecida %>%
   group_by(escenario, target) %>%
   arrange(
     factor(prioridad_tesis, levels = c("prioritaria", "apoyo_interpretativo", "candidata_especifica_modelo", "exploratoria_target_secundario", "solo_exploratoria_ia", "baja_prioridad")),
-    desc(frecuencia_media),
+    desc(score_combinado),
     desc(n_modelos_con_variable),
-    desc(importancia_norm_media),
     .by_group = TRUE
   ) %>%
   mutate(ranking_consenso = row_number()) %>%
@@ -323,8 +349,7 @@ variables_finales_tesis <- consenso_variables %>%
   arrange(
     escenario,
     factor(prioridad_tesis, levels = c("prioritaria", "apoyo_interpretativo", "candidata_especifica_modelo")),
-    desc(frecuencia_media),
-    desc(importancia_norm_media)
+    desc(score_combinado)
   )
 
 variables_por_familia <- consenso_variables %>%

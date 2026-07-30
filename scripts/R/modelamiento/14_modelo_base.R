@@ -253,7 +253,17 @@ calcular_metricas_grupo <- function(df_m) {
   sst <- sum((df_m$y_obs - mean(df_m$y_obs))^2)
   sse <- sum(error^2)
   r2 <- ifelse(sst > 0, 1 - sse / sst, NA_real_)
-  spearman <- if (nrow(df_m) >= 3 && dplyr::n_distinct(df_m$y_pred) >= 2 && dplyr::n_distinct(df_m$y_obs) >= 2) {
+  modelo_actual <- unique(df_m$modelo)[1]
+  spearman <- if (identical(modelo_actual, "media_entrenamiento")) {
+    # El modelo nulo predice la media del entrenamiento de cada pliegue
+    # excluyendo al grupo evaluado (leave-one-group-out): esa media es una
+    # funcion monotona decreciente del valor excluido, por lo que al agrupar
+    # las predicciones de todos los pliegues, la correlacion de rangos entre
+    # y_obs e y_pred da -1.000 por construccion matematica, no porque el
+    # modelo capture una asociacion negativa real. Se reporta como NA para
+    # no sugerir una asociacion que no existe.
+    NA_real_
+  } else if (nrow(df_m) >= 3 && dplyr::n_distinct(df_m$y_pred) >= 2 && dplyr::n_distinct(df_m$y_obs) >= 2) {
     suppressWarnings(stats::cor(df_m$y_obs, df_m$y_pred, method = "spearman"))
   } else {
     NA_real_
