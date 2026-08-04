@@ -6,8 +6,7 @@
 
 # Archivos de sesion de R
 .RData
-.RDataTmp
-.RDataTmp1
+.RDataTmp*
 .Rhistory
 
 # Temporales del sistema

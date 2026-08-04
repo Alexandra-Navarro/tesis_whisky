@@ -478,7 +478,7 @@ if (nrow(plot_best) > 0) {
   g2 <- ggplot(plot_best, aes(x = mae_bootstrap, y = escenario)) +
     geom_col(fill = "grey35", width = 0.7) +
     geom_errorbar(aes(xmin = mae_p05, xmax = mae_p95), width = 0.22, linewidth = 0.35) +
-    geom_text(aes(label = modelo_recomendado), hjust = -0.05, size = 3.2) +
+    geom_text(aes(x = mae_p95, label = modelo_recomendado), hjust = -0.05, size = 3.5) +
     labs(
       title = "Mejor modelo por escenario para y_fenolico_comun",
       subtitle = "Seleccion segun menor MAE medio bootstrap",
