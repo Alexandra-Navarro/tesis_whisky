@@ -1,28 +1,33 @@
 # ============================================================
-# 16b_sensibilidad_outliers_quimicos.R
-# Sensibilidad de los modelos principales (M_pura: Ridge y Random Forest
-# restringido) a las unidades analiticas marcadas como atipicas en el EDA
-# quimico (T2/Q, script 10_analisis_quimico.R)
+# 16f_sensibilidad_escala_septiembre.R
+# Sensibilidad del modelo principal (M_pura: Random Forest restringido y
+# Ridge) a la diferencia de escala del bloque cata_septiembre_2024 (1 a 5)
+# frente al resto de los bloques sensoriales de M_pura (0 a 5).
 # Tesis whisky chileno - modelamiento quimico-sensorial
 # ============================================================
 
-# Pregunta que responde este script: si se excluyen del bootstrap las
-# unidades analiticas de M_pura que 10_analisis_quimico.R ya marco como
-# atipicas por T2 de Hotelling o Q-residual (combinacion de variables
-# quimicas fuera de lo esperado para su grupo analitico), ?cambia
-# sustancialmente el desempeno de los modelos principales (Ridge, el mejor
-# por MAE bootstrap, y Random Forest restringido, el de mejor R2/Spearman;
-# ver validacion_bootstrap_cv.xlsx)? Si no cambia, es evidencia de que la
-# conclusion principal de la tesis es robusta a esas unidades puntuales.
-# Si cambia, es un hallazgo metodologico que vale la pena discutir.
+# Pregunta que responde este script: seccion 3.1.3 (imp:fuentes) declara que
+# el formulario individual de cata_septiembre_2024 registra los descriptores
+# de y_fenolico_comun en una escala de 1 a 5, mientras que los demas bloques
+# sensoriales de M_pura (cata_alexandra_260603, cata_social_enero_2025,
+# panel_noviembre) usan una escala de 0 a 5. Esta diferencia de piso de
+# escala puede introducir un desplazamiento sistematico en y_fenolico_comun
+# para las unidades de cata_septiembre_2024, que el modelo podria leer como
+# senal quimica en vez de un artefacto de instrumento de medicion.
 #
-# Mismo procedimiento de bootstrap agrupado que 16_validacion_bootstrap_cv.R
-# (100 iteraciones, remuestreo con reemplazo por identificador_quimico, mismos
-# hiperparametros de ranger/glmnet), aplicado en paralelo a dos versiones de
-# M_pura: "completo" (34 unidades, matriz pura sin cata individual JU) y
-# "sin_outliers_eda" (excluyendo ademas las marcadas por T2/Q). No se
-# modifica ni se sobrescribe M_pura en ningun archivo: la exclusion es solo
-# interna a este script de sensibilidad.
+# Las unicas 3 muestras experimentales con filas en cata_septiembre_2024
+# (B1, C70, H76) tienen tambien filas en cata_social_enero_2025 para la
+# MISMA muestra fisica, lo que permite una comparacion pareada directa del
+# efecto de escala antes de aplicar ninguna correccion.
+#
+# Este script reescala linealmente a 0-5 los valores de y_fenolico_comun de
+# las 9 unidades de cata_septiembre_2024 (26.5% de M_pura), mediante
+# y_reescalado = (y_original - 1) * 5 / 4, transformacion valida porque cada
+# descriptor fuente esta acotado en [1,5] y el promedio conmuta con una
+# transformacion afin comun. Luego reajusta el modelo con el mismo bootstrap
+# agrupado de 16_validacion_bootstrap_cv.R sobre las 34 unidades (10 muestras
+# independientes, sin excluir ninguna), comparando la version "original"
+# contra la version "reescalado_0a5".
 
 # ------------------------------------------------------------
 # 1. Configuracion
@@ -61,22 +66,17 @@ set.seed(123)
 dir_modelamiento <- file.path(dir_data, "modelamiento")
 dir_outputs <- file.path(dir_proyecto, "outputs")
 dir_outputs_modelamiento <- file.path(dir_outputs, "modelamiento")
-dir_outputs_sensibilidad <- file.path(dir_outputs_modelamiento, "sensibilidad_outliers")
+dir_outputs_sensibilidad <- file.path(dir_outputs_modelamiento, "sensibilidad_escala_septiembre")
 
 dir.create(dir_modelamiento, recursive = TRUE, showWarnings = FALSE)
 dir.create(dir_outputs_sensibilidad, recursive = TRUE, showWarnings = FALSE)
 
 ruta_datos_modelamiento <- file.path(dir_modelamiento, "datos_modelamiento.xlsx")
-ruta_analisis_quimico <- file.path(dir_procesamiento, "analisis_quimico.xlsx")
-ruta_salida_excel <- file.path(dir_modelamiento, "sensibilidad_outliers_quimicos.xlsx")
+ruta_salida_excel <- file.path(dir_modelamiento, "sensibilidad_escala_septiembre.xlsx")
 
 if (!file.exists(ruta_datos_modelamiento)) {
   stop("No existe el archivo requerido: ", ruta_datos_modelamiento,
        "\nEjecuta primero scripts/R/modelamiento/12_preparar_datos_modelamiento.R")
-}
-if (!file.exists(ruta_analisis_quimico)) {
-  stop("No existe el archivo requerido: ", ruta_analisis_quimico,
-       "\nEjecuta primero scripts/R/exploratorio/10_analisis_quimico.R")
 }
 
 # Mismos parametros que 16_validacion_bootstrap_cv.R, para que la
@@ -91,9 +91,10 @@ limite_superior_target <- 5
 n_arboles_rf <- 300
 max_depth_rf <- 3
 
-targets_a_evaluar <- c("y_fenolico_comun", "y_frutal_comun")
-modelos_a_evaluar <- c("ridge", "random_forest_restringido")
+target_a_evaluar <- "y_fenolico_comun"
+modelos_a_evaluar <- c("random_forest_restringido", "ridge")
 escenario_id <- "M_pura"
+bloque_escala_distinta <- "cata_septiembre_2024"
 
 # ------------------------------------------------------------
 # 2. Funciones auxiliares (replicadas de 16_validacion_bootstrap_cv.R para
@@ -134,8 +135,6 @@ calcular_metricas_vec <- function(y_obs, y_pred, y_train = NULL) {
     return(data.frame(mae = NA_real_, rmse = NA_real_, r2 = NA_real_, sse = NA_real_, sst = NA_real_, spearman = NA_real_, bias = NA_real_))
   }
 
-  # Referencia de R2 = media del pliegue de entrenamiento de esa iteracion,
-  # no del propio pliegue de prueba (ver 16_validacion_bootstrap_cv.R).
   referencia <- if (!is.null(y_train) && length(stats::na.omit(as.numeric(y_train))) > 0) {
     mean(as.numeric(y_train), na.rm = TRUE)
   } else {
@@ -274,7 +273,7 @@ crear_split_bootstrap_agrupado <- function(df) {
 ajustar_rf_boot <- function(datos, iteracion) {
   n_train <- length(datos$y_train)
   p <- length(datos$predictores)
-  if (n_train < 8 || p < 1) return(NULL)
+  if (n_train < 8 || p < 1) return(list(pred = NULL, importancia = data.frame()))
 
   df_train <- as.data.frame(datos$train[, datos$predictores, drop = FALSE])
   df_test <- as.data.frame(datos$test[, datos$predictores, drop = FALSE])
@@ -289,20 +288,30 @@ ajustar_rf_boot <- function(datos, iteracion) {
       formula = stats::as.formula(paste(bt(target_tmp), "~", paste(bt(datos$predictores), collapse = " + "))),
       data = df_train, num.trees = n_arboles_rf, mtry = mtry_val,
       min.node.size = min_node, max.depth = max_depth_rf,
-      respect.unordered.factors = "order", seed = 123 + iteracion
+      respect.unordered.factors = "order", seed = 123 + iteracion,
+      importance = "permutation"
     )
   }, error = function(e) NULL)
 
-  if (is.null(fit)) return(NULL)
+  if (is.null(fit)) return(list(pred = NULL, importancia = data.frame()))
 
   pred <- tryCatch(stats::predict(fit, data = df_test)$predictions, error = function(e) rep(mean(datos$y_train), nrow(df_test)))
-  recortar_prediccion(pred)
+
+  imp <- tryCatch(ranger::importance(fit), error = function(e) NULL)
+  importancia <- if (!is.null(imp)) {
+    data.frame(predictor = names(imp), importancia_abs = as.numeric(imp), stringsAsFactors = FALSE) %>%
+      filter(!is.na(importancia_abs), importancia_abs > 0)
+  } else {
+    data.frame()
+  }
+
+  list(pred = recortar_prediccion(pred), importancia = importancia)
 }
 
 ajustar_ridge_boot <- function(datos, escenario, target, iteracion) {
   n_train <- length(datos$y_train)
   p <- length(datos$predictores)
-  if (n_train < 6 || p < 1) return(NULL)
+  if (n_train < 6 || p < 1) return(list(pred = NULL, importancia = data.frame()))
 
   nfolds_inner <- min(5, max(3, floor(n_train / 2)))
 
@@ -317,23 +326,34 @@ ajustar_ridge_boot <- function(datos, escenario, target, iteracion) {
     )
   }, error = function(e) NULL)
 
-  if (is.null(fit)) return(NULL)
+  if (is.null(fit)) return(list(pred = NULL, importancia = data.frame()))
 
   pred <- tryCatch(
     as.numeric(stats::predict(fit, newx = datos$x_test, s = "lambda.min")),
     error = function(e) rep(mean(datos$y_train), nrow(datos$x_test))
   )
-  recortar_prediccion(pred)
+
+  coefs <- tryCatch(as.matrix(stats::coef(fit, s = "lambda.min")), error = function(e) NULL)
+  importancia <- if (!is.null(coefs)) {
+    data.frame(predictor = rownames(coefs), importancia_abs = abs(as.numeric(coefs[, 1])), stringsAsFactors = FALSE) %>%
+      filter(predictor != "(Intercept)", !is.na(importancia_abs), importancia_abs > 0)
+  } else {
+    data.frame()
+  }
+
+  list(pred = recortar_prediccion(pred), importancia = importancia)
 }
 
 ejecutar_bootstrap_modelo <- function(df_base, target, version, modelo) {
   resultados <- list()
+  importancias <- list()
   k <- 1
+  ki <- 1
   max_pred <- if (modelo == "random_forest_restringido") max_predictores_arboles else max_predictores_supervisados
 
   # Misma semilla base que 16_validacion_bootstrap_cv.R para el escenario
   # principal (M_pura, y_fenolico_comun), de modo que el split de cada
-  # iteracion b sea identico al de ese script para la version "completo".
+  # iteracion b sea identico al de ese script para la version "original".
   semilla_base <- 123 + sum(utf8ToInt(paste0(escenario_id, "_", target)))
 
   for (b in seq_len(n_bootstrap)) {
@@ -348,14 +368,14 @@ ejecutar_bootstrap_modelo <- function(df_base, target, version, modelo) {
     datos <- preparar_matrices_x(train_b, test_b, target, predictores)
     if (is.null(datos)) next
 
-    pred <- if (modelo == "random_forest_restringido") {
+    ajuste <- if (modelo == "random_forest_restringido") {
       ajustar_rf_boot(datos, b)
     } else {
       ajustar_ridge_boot(datos, escenario_id, target, b)
     }
-    if (is.null(pred)) next
+    if (is.null(ajuste$pred)) next
 
-    met <- calcular_metricas_vec(test_b[[target]], pred, y_train = datos$y_train)
+    met <- calcular_metricas_vec(test_b[[target]], ajuste$pred, y_train = datos$y_train)
 
     resultados[[k]] <- data.frame(
       modelo = modelo, version = version, target = target, iteracion = b,
@@ -364,13 +384,20 @@ ejecutar_bootstrap_modelo <- function(df_base, target, version, modelo) {
       met, stringsAsFactors = FALSE
     )
     k <- k + 1
+
+    if (nrow(ajuste$importancia) > 0) {
+      importancias[[ki]] <- ajuste$importancia %>%
+        mutate(modelo = modelo, version = version, target = target, iteracion = b)
+      ki <- ki + 1
+    }
   }
 
-  bind_rows(resultados)
+  list(metricas = bind_rows(resultados), importancia = bind_rows(importancias))
 }
 
 # ------------------------------------------------------------
-# 3. Datos: M_pura completo vs. M_pura sin unidades marcadas por T2/Q
+# 3. Datos: y_fenolico_comun original vs. reescalado a 0-5 en
+#    cata_septiembre_2024
 # ------------------------------------------------------------
 
 matriz_pura <- readxl::read_excel(ruta_datos_modelamiento, sheet = "01_pura")
@@ -380,71 +407,82 @@ matriz_pura <- readxl::read_excel(ruta_datos_modelamiento, sheet = "01_pura")
 # Las columnas x_ de "01_pura" incluyen ademas JU, Folin y GC-MS, que deben
 # excluirse explicitamente ANTES del bootstrap; de lo contrario, el selector
 # de predictores por correlacion podria elegir GC-MS en algunas iteraciones
-# (tiene cobertura real de 23.5%) y el "completo" de este script dejaria de
-# coincidir con el M_pura de 13 predictores usado en el resto de la tesis.
+# (tiene cobertura real de 23.5%) y este script dejaria de coincidir con el
+# M_pura de 13 predictores usado en el resto de la tesis.
 predictores_gcfid_todos <- grep("^x_gcfid_", names(matriz_pura), value = TRUE)
 predictores_no_gcfid <- setdiff(obtener_predictores_x(matriz_pura), predictores_gcfid_todos)
 matriz_pura <- matriz_pura %>% select(-all_of(predictores_no_gcfid))
 
-t2q_outliers <- readxl::read_excel(ruta_analisis_quimico, sheet = "13_t2q_outliers") %>%
-  filter(excede_t2 %in% TRUE | excede_q %in% TRUE) %>%
-  distinct(unidad_analitica_id)
+df_base <- matriz_pura %>%
+  mutate(across(all_of(obtener_predictores_x(matriz_pura)), convertir_numericamente)) %>%
+  mutate(y_fenolico_comun = convertir_numericamente(y_fenolico_comun))
+df_base$grupo_validacion <- as.character(df_base$identificador_quimico)
 
-# t2q_outliers es la lista GLOBAL de unidades marcadas por T2/Q en todo
-# 10_analisis_quimico.R (incluye bloques que no forman parte de M_pura,
-# ej. JU). Lo que realmente importa aqui es cuantas de esas unidades
-# efectivamente estan dentro de M_pura -eso es lo que se excluye.
-unidades_excluidas_global <- t2q_outliers$unidad_analitica_id
+es_septiembre <- df_base$bloque_sensorial == bloque_escala_distinta
 
-df_completo <- matriz_pura %>%
-  mutate(across(all_of(obtener_predictores_x(matriz_pura)), convertir_numericamente))
-df_completo$grupo_validacion <- as.character(df_completo$identificador_quimico)
+df_original <- df_base
+df_reescalado <- df_base
+# y_reescalado = (y - 1) * 5 / 4: mapea el piso de la escala 1-5 (1) a 0 y
+# conserva el techo comun a ambas escalas (5), sin alterar las unidades de
+# los demas bloques sensoriales (ya en escala 0-5).
+df_reescalado$y_fenolico_comun[es_septiembre] <- (df_reescalado$y_fenolico_comun[es_septiembre] - 1) * 5 / 4
 
-unidades_excluidas <- intersect(df_completo$unidad_analitica_id, unidades_excluidas_global)
-df_sin_outliers <- df_completo %>% filter(!(unidad_analitica_id %in% unidades_excluidas))
+cat("\nSENSIBILIDAD A LA ESCALA DEL BLOQUE CATA_SEPTIEMBRE_2024 (M_pura, Random Forest restringido y Ridge)\n")
+cat("Unidades totales en M_pura:", nrow(df_base), "\n")
+cat("Muestras independientes (identificador_quimico):", dplyr::n_distinct(df_base$identificador_quimico), "\n")
+cat("Unidades del bloque cata_septiembre_2024 (escala 1-5):", sum(es_septiembre), "\n")
+cat("Muestras (identificador_quimico) con filas en cata_septiembre_2024:",
+    paste(sort(unique(df_base$identificador_quimico[es_septiembre])), collapse = ", "), "\n")
 
-cat("\nSENSIBILIDAD A OUTLIERS QUIMICOS (M_pura, Ridge y Random Forest restringido)\n")
-cat("Unidades totales en M_pura:", nrow(df_completo), "\n")
-cat("Unidades marcadas por T2/Q dentro de M_pura (excluidas en la version sin_outliers_eda):", length(unidades_excluidas), "\n")
-cat("Unidades tras exclusion:", nrow(df_sin_outliers), "\n")
+comparacion_pareada <- df_base %>%
+  filter(identificador_quimico %in% unique(df_base$identificador_quimico[es_septiembre])) %>%
+  select(identificador_quimico, bloque_sensorial, y_fenolico_comun) %>%
+  distinct() %>%
+  arrange(identificador_quimico, bloque_sensorial)
+cat("\nComparacion pareada por muestra (misma muestra fisica, distinto bloque):\n")
+print(as.data.frame(comparacion_pareada), row.names = FALSE)
 
 # ------------------------------------------------------------
-# 4. Bootstrap para cada target x version
+# 4. Bootstrap para cada version
 # ------------------------------------------------------------
 
 metricas_sensibilidad <- list()
+importancia_sensibilidad <- list()
 k <- 1
+ki <- 1
 
-for (target in targets_a_evaluar) {
-  if (!(target %in% names(df_completo))) next
+for (version in c("original", "reescalado_0a5")) {
+  df_version <- if (version == "original") df_original else df_reescalado
+  df_modelo <- df_version %>% filter(!is.na(.data[[target_a_evaluar]]))
 
-  for (version in c("completo", "sin_outliers_eda")) {
-    df_version <- if (version == "completo") df_completo else df_sin_outliers
-    df_modelo <- df_version %>% filter(!is.na(.data[[target]]))
+  if (nrow(df_modelo) < min_n_target_modelable || dplyr::n_distinct(df_modelo$grupo_validacion) < 4) {
+    message("Omitido (n insuficiente): ", target_a_evaluar, " - ", version, " (n=", nrow(df_modelo), ")")
+    next
+  }
 
-    if (nrow(df_modelo) < min_n_target_modelable || dplyr::n_distinct(df_modelo$grupo_validacion) < 4) {
-      message("Omitido (n insuficiente): ", target, " - ", version, " (n=", nrow(df_modelo), ")")
-      next
+  for (modelo in modelos_a_evaluar) {
+    message("Bootstrap ", modelo, ": ", target_a_evaluar, " - ", version, " (n=", nrow(df_modelo), ", grupos=", dplyr::n_distinct(df_modelo$grupo_validacion), ")")
+    res <- ejecutar_bootstrap_modelo(df_modelo, target_a_evaluar, version, modelo)
+    if (nrow(res$metricas) > 0) {
+      metricas_sensibilidad[[k]] <- res$metricas
+      k <- k + 1
     }
-
-    for (modelo in modelos_a_evaluar) {
-      message("Bootstrap ", modelo, ": ", target, " - ", version, " (n=", nrow(df_modelo), ")")
-      res <- ejecutar_bootstrap_modelo(df_modelo, target, version, modelo)
-      if (nrow(res) > 0) {
-        metricas_sensibilidad[[k]] <- res
-        k <- k + 1
-      }
+    if (nrow(res$importancia) > 0) {
+      importancia_sensibilidad[[ki]] <- res$importancia
+      ki <- ki + 1
     }
   }
 }
 
 metricas_sensibilidad <- bind_rows(metricas_sensibilidad)
+importancia_sensibilidad <- bind_rows(importancia_sensibilidad)
 
 # ------------------------------------------------------------
-# 5. Resumen comparativo completo vs. sin_outliers_eda
+# 5. Resumen comparativo original vs. reescalado_0a5
 # ------------------------------------------------------------
 
 resumen_sensibilidad <- data.frame()
+comparacion_diferencias <- data.frame()
 if (nrow(metricas_sensibilidad) > 0) {
   resumen_sensibilidad <- metricas_sensibilidad %>%
     group_by(modelo, target, version) %>%
@@ -458,6 +496,7 @@ if (nrow(metricas_sensibilidad) > 0) {
       rmse_media = mean(rmse, na.rm = TRUE),
       r2_media = mean(r2, na.rm = TRUE),
       r2_agregado = 1 - sum(sse, na.rm = TRUE) / sum(sst, na.rm = TRUE),
+      r2_pct_positivo = round(100 * mean(r2 > 0, na.rm = TRUE), 1),
       spearman_media = mean(spearman, na.rm = TRUE),
       bias_media = mean(bias, na.rm = TRUE),
       .groups = "drop"
@@ -465,58 +504,88 @@ if (nrow(metricas_sensibilidad) > 0) {
     arrange(modelo, target, version)
 
   comparacion_diferencias <- resumen_sensibilidad %>%
-    select(modelo, target, version, mae_media, rmse_media, r2_media, spearman_media) %>%
-    pivot_wider(names_from = version, values_from = c(mae_media, rmse_media, r2_media, spearman_media)) %>%
+    select(modelo, target, version, mae_media, r2_agregado) %>%
+    pivot_wider(names_from = version, values_from = c(mae_media, r2_agregado)) %>%
     mutate(
-      diferencia_mae = mae_media_sin_outliers_eda - mae_media_completo,
-      diferencia_mae_pct = round(100 * diferencia_mae / mae_media_completo, 1),
-      diferencia_r2 = r2_media_sin_outliers_eda - r2_media_completo,
+      diferencia_mae = mae_media_reescalado_0a5 - mae_media_original,
+      diferencia_mae_pct = round(100 * diferencia_mae / mae_media_original, 1),
+      diferencia_r2_agregado = r2_agregado_reescalado_0a5 - r2_agregado_original,
       lectura = case_when(
-        is.na(diferencia_mae_pct) ~ "no_comparable",
-        abs(diferencia_mae_pct) <= 10 ~ "robusto: el MAE cambia menos de 10% al excluir los outliers del EDA",
-        abs(diferencia_mae_pct) <= 25 ~ "sensibilidad moderada: revisar si las unidades excluidas concentran senal real o ruido",
-        TRUE ~ "sensibilidad alta: el resultado depende fuertemente de las unidades marcadas por el EDA"
+        is.na(r2_agregado_reescalado_0a5) ~ "no_comparable",
+        abs(diferencia_r2_agregado) < 0.02 ~ "sin_cambio_relevante: el R2 agregado no cambia de forma apreciable al reescalar cata_septiembre_2024",
+        r2_agregado_reescalado_0a5 > r2_agregado_original ~ "mejora_al_reescalar",
+        TRUE ~ "empeora_al_reescalar"
       )
     )
-} else {
-  comparacion_diferencias <- data.frame()
 }
 
 # ------------------------------------------------------------
-# 6. Grafico comparativo
+# 6. Variables prioritarias por version (solo Random Forest)
+# ------------------------------------------------------------
+
+variables_por_version <- data.frame()
+if (nrow(importancia_sensibilidad) > 0) {
+  n_iter_por_version <- metricas_sensibilidad %>%
+    filter(modelo == "random_forest_restringido") %>%
+    group_by(version) %>%
+    summarise(n_iteraciones = dplyr::n_distinct(iteracion), .groups = "drop")
+
+  variables_por_version <- importancia_sensibilidad %>%
+    filter(modelo == "random_forest_restringido") %>%
+    group_by(version, predictor) %>%
+    summarise(
+      n_apariciones = n(),
+      importancia_abs_media = mean(importancia_abs, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    left_join(n_iter_por_version, by = "version") %>%
+    mutate(frecuencia_seleccion = round(n_apariciones / n_iteraciones, 3)) %>%
+    group_by(version) %>%
+    arrange(desc(importancia_abs_media), .by_group = TRUE) %>%
+    mutate(ranking = row_number()) %>%
+    ungroup() %>%
+    filter(ranking <= 10) %>%
+    arrange(version, ranking)
+}
+
+# ------------------------------------------------------------
+# 7. Grafico comparativo
 # ------------------------------------------------------------
 
 ruta_grafico <- NA_character_
 if (nrow(metricas_sensibilidad) > 0) {
   p_comparacion <- ggplot(metricas_sensibilidad, aes(x = version, y = mae, fill = version)) +
     geom_boxplot(alpha = 0.6, outlier.alpha = 0.4) +
-    facet_grid(modelo ~ target) +
+    facet_wrap(~modelo) +
     labs(
-      title = "Sensibilidad del MAE bootstrap a outliers quimicos del EDA",
-      subtitle = "Ridge y Random Forest restringido, M_pura, 100 iteraciones de bootstrap agrupado",
+      title = "Sensibilidad del MAE bootstrap a la escala de cata_septiembre_2024",
+      subtitle = "Random Forest restringido y Ridge, M_pura, y_fenolico_comun, 100 iteraciones de bootstrap agrupado",
       x = NULL, y = "MAE (test bootstrap)", fill = NULL
     ) +
     theme_minimal(base_size = 11) +
     theme(legend.position = "bottom")
 
-  ruta_grafico <- file.path(dir_outputs_sensibilidad, "01_comparacion_mae_completo_vs_sin_outliers.png")
-  ggsave(ruta_grafico, p_comparacion, width = 9, height = 8, dpi = 300)
+  ruta_grafico <- file.path(dir_outputs_sensibilidad, "01_comparacion_mae_original_vs_reescalado.png")
+  ggsave(ruta_grafico, p_comparacion, width = 8, height = 6, dpi = 300)
 }
 
 # ------------------------------------------------------------
-# 7. Exportacion
+# 8. Exportacion
 # ------------------------------------------------------------
 
 resumen_general <- data.frame(
   indicador = c(
-    "escenario", "modelo_evaluado", "n_bootstrap_por_version",
-    "n_unidades_completo", "n_unidades_marcadas_eda", "n_unidades_sin_outliers_eda",
-    "targets_evaluados", "archivo_salida"
+    "escenario", "target", "modelos_evaluados", "n_bootstrap_por_version",
+    "n_unidades_totales", "n_muestras_independientes",
+    "n_unidades_cata_septiembre_2024", "muestras_con_septiembre",
+    "transformacion_reescalado", "archivo_salida"
   ),
   valor = c(
-    escenario_id, paste(modelos_a_evaluar, collapse = "; "), as.character(n_bootstrap),
-    as.character(nrow(df_completo)), as.character(length(unidades_excluidas)),
-    as.character(nrow(df_sin_outliers)), paste(targets_a_evaluar, collapse = "; "),
+    escenario_id, target_a_evaluar, paste(modelos_a_evaluar, collapse = "; "), as.character(n_bootstrap),
+    as.character(nrow(df_base)), as.character(dplyr::n_distinct(df_base$identificador_quimico)),
+    as.character(sum(es_septiembre)),
+    paste(sort(unique(df_base$identificador_quimico[es_septiembre])), collapse = ", "),
+    "y_reescalado = (y_original - 1) * 5 / 4, aplicado solo a filas de cata_septiembre_2024",
     ruta_salida_excel
   ),
   stringsAsFactors = FALSE
@@ -524,26 +593,29 @@ resumen_general <- data.frame(
 
 notas <- data.frame(
   punto = c(
-    "Que compara", "Que es 'completo'", "Que es 'sin_outliers_eda'",
-    "Metodologia", "Interpretacion", "Limite"
+    "Que compara", "Que es 'original'", "Que es 'reescalado_0a5'",
+    "Comparacion pareada", "Metodologia", "Interpretacion", "Limite"
   ),
   descripcion = c(
-    "Los mismos modelos (Ridge, el de mejor MAE bootstrap en M_pura, y Random Forest restringido, el de mejor R2/Spearman) y el mismo procedimiento de validacion (bootstrap agrupado por identificador_quimico, 100 iteraciones), cada uno ajustado dos veces: con todas las unidades de M_pura y excluyendo las marcadas por T2/Q en el EDA quimico (script 10).",
-    paste0("M_pura completo: ", nrow(df_completo), " unidades analiticas."),
-    paste0("M_pura excluyendo unidades con T2 de Hotelling o Q-residual por encima del limite del 95% (script 10_analisis_quimico.R, hoja 13_t2q_outliers): ", nrow(df_sin_outliers), " unidades."),
-    "Hiperparametros y logica de bootstrap identicos a 16_validacion_bootstrap_cv.R para que la comparacion sea metodologicamente equivalente.",
-    "Si el MAE medio cambia poco entre versiones, los resultados principales de la tesis no dependen criticamente de esas unidades puntuales. Si cambia mucho, es evidencia de que esas unidades tienen peso desproporcionado y merece discutirse en la tesis.",
-    "No se elimina ninguna unidad de los archivos de datos ni de otros scripts; la exclusion es interna y exclusiva de este analisis de sensibilidad."
+    "Random Forest restringido y Ridge, con el mismo procedimiento de validacion (bootstrap agrupado por identificador_quimico, 100 iteraciones), cada uno ajustado dos veces sobre M_pura y_fenolico_comun: con la escala original declarada por cada bloque sensorial, y reescalando linealmente a 0-5 las 9 unidades de cata_septiembre_2024 (unico bloque en escala 1-5).",
+    paste0("M_pura sin modificar: ", nrow(df_base), " unidades analiticas, ", dplyr::n_distinct(df_base$identificador_quimico), " muestras independientes, y_fenolico_comun tal como se declara en la seccion imp:fuentes."),
+    "M_pura con las 9 unidades de cata_septiembre_2024 reescaladas a 0-5 mediante (y-1)*5/4; las 25 unidades restantes (ya en escala 0-5) no se modifican. Mismas 34 unidades y 10 muestras independientes que la version original.",
+    "B1, C70 y H76 son las unicas muestras con filas en ambos bloques (cata_septiembre_2024 y cata_social_enero_2025), lo que permite comparar directamente el mismo whisky bajo las dos escalas antes de cualquier modelo.",
+    "Hiperparametros y logica de bootstrap identicos a 16_validacion_bootstrap_cv.R para que la comparacion sea metodologicamente equivalente. R2 calculado de forma agregada (SSE y SST sumados sobre todas las predicciones fuera de bolsa, referencia = media del pliegue de entrenamiento de cada iteracion), no promediando el R2 de cada iteracion.",
+    "Si el R2 agregado y el MAE no cambian de forma apreciable entre 'original' y 'reescalado_0a5', el desempeno del modelo principal no depende del piso de escala distinto de cata_septiembre_2024.",
+    "La transformacion lineal aplicada asume que el desplazamiento de escala es puramente aditivo/proporcional (mismo piso para los 5 descriptores fuente). No corrige un eventual sesgo del panel de ese bloque especifico, solo el artefacto de escala declarado en la seccion imp:fuentes."
   ),
   stringsAsFactors = FALSE
 )
 
 lista_hojas <- list(
   "00_resumen" = resumen_general,
-  "01_metricas_bootstrap" = metricas_sensibilidad,
-  "02_resumen_comparativo" = resumen_sensibilidad,
-  "03_comparacion_diferencias" = comparacion_diferencias,
-  "04_notas" = notas
+  "01_comparacion_pareada" = comparacion_pareada,
+  "02_metricas_bootstrap" = metricas_sensibilidad,
+  "03_resumen_comparativo" = resumen_sensibilidad,
+  "04_comparacion_diferencias" = comparacion_diferencias,
+  "05_variables_prioritarias" = variables_por_version,
+  "06_notas" = notas
 )
 lista_hojas <- lista_hojas[vapply(lista_hojas, function(x) is.data.frame(x) && nrow(x) > 0, logical(1))]
 
@@ -554,5 +626,9 @@ cat("Archivo generado:\n", ruta_salida_excel, "\n")
 if (!is.na(ruta_grafico)) cat("Grafico generado:\n", ruta_grafico, "\n")
 cat("\nResumen comparativo:\n")
 print(resumen_sensibilidad)
-cat("\nDiferencias completo vs. sin_outliers_eda:\n")
-print(comparacion_diferencias %>% select(modelo, target, diferencia_mae, diferencia_mae_pct, diferencia_r2, lectura))
+cat("\nDiferencias original vs. reescalado_0a5:\n")
+if (nrow(comparacion_diferencias) > 0) {
+  print(comparacion_diferencias %>% select(modelo, target, diferencia_mae, diferencia_mae_pct, diferencia_r2_agregado, lectura))
+}
+cat("\nVariables prioritarias (Random Forest) por version:\n")
+print(variables_por_version)

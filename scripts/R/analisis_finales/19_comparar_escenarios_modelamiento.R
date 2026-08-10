@@ -125,6 +125,13 @@ decidir_modelo <- function(escenario, modelo, ranking_mae, mae_media, r2_media, 
 base_metricas <- leer_hoja_segura(archivo_base, "00_resumen_metricas")
 small_metricas <- leer_hoja_segura(archivo_small, "00_resumen_metricas")
 boot_resumen <- leer_hoja_segura(archivo_boot, "02_resumen_metricas_boot")
+# media_entrenamiento y lineal_reducido ahora se evaluan dentro del mismo
+# bootstrap agrupado que los candidatos (16_validacion_bootstrap_cv.R) para
+# ser directamente comparables (OE4), pero este script solo compara y
+# selecciona entre los seis modelos candidatos, no entre las lineas base.
+if (nrow(boot_resumen) > 0 && "modelo" %in% names(boot_resumen)) {
+  boot_resumen <- boot_resumen %>% dplyr::filter(!modelo %in% c("media_entrenamiento", "lineal_reducido"))
+}
 boot_cv <- leer_hoja_segura(archivo_boot, "05_comparacion_cv_boot")
 residuos_resumen <- leer_hoja_segura(archivo_residuos, "02_resumen_residuos")
 vars_finales <- leer_hoja_segura(archivo_interp, "05_variables_finales_tesis")
@@ -208,7 +215,7 @@ boot_metricas2 <- boot_resumen %>%
     bias_cv = NA_real_,
     mae_bootstrap = safe_num(mae_media),
     rmse_bootstrap = safe_num(rmse_media),
-    r2_bootstrap = safe_num(r2_media),
+    r2_bootstrap = safe_num(r2_agregado),
     spearman_bootstrap = safe_num(spearman_media),
     mae_p05 = safe_num(mae_p05),
     mae_p50 = safe_num(mae_p50),
@@ -236,6 +243,7 @@ ranking_bootstrap <- boot_resumen %>%
     mae_media = safe_num(mae_media),
     rmse_media = safe_num(rmse_media),
     r2_media = safe_num(r2_media),
+    r2_agregado = safe_num(r2_agregado),
     spearman_media = safe_num(spearman_media),
     mae_p05 = safe_num(mae_p05),
     mae_p95 = safe_num(mae_p95),
@@ -278,7 +286,7 @@ mejor_small <- ranking_bootstrap %>%
   slice_min(order_by = mae_media, n = 1, with_ties = FALSE) %>%
   ungroup() %>%
   select(escenario, target, mejor_modelo = modelo, mae_mejor = mae_media, rmse_mejor = rmse_media,
-         r2_mejor = r2_media, spearman_mejor = spearman_media, mae_p05, mae_p95, estabilidad_error)
+         r2_mejor = r2_agregado, spearman_mejor = spearman_media, mae_p05, mae_p95, estabilidad_error)
 
 comparacion_base_final <- base_ref %>%
   left_join(mejor_small, by = c("escenario", "target")) %>%
@@ -305,7 +313,7 @@ comparacion_escenarios <- mejor_modelo_por_escenario %>%
     mae_p05,
     mae_p95,
     rmse_bootstrap = rmse_media,
-    r2_bootstrap = r2_media,
+    r2_bootstrap = r2_agregado,
     spearman_bootstrap = spearman_media,
     estabilidad_error,
     recomendacion_uso,
@@ -390,13 +398,13 @@ resumen_ejecutivo <- tibble(
     "y_fenolico_comun",
     ifelse(nrow(mejor_a_pura) > 0, mejor_a_pura$modelo[1], NA_character_),
     ifelse(nrow(mejor_a_pura) > 0, round(mejor_a_pura$mae_media[1], 3), NA),
-    ifelse(nrow(mejor_a_pura) > 0, round(mejor_a_pura$r2_media[1], 3), NA),
+    ifelse(nrow(mejor_a_pura) > 0, round(mejor_a_pura$r2_agregado[1], 3), NA),
     ifelse(nrow(mejor_a_pura) > 0, round(mejor_a_pura$spearman_media[1], 3), NA),
     "M_cata_individual",
     ifelse(nrow(mejor_d_con_ju) > 0, mejor_d_con_ju$modelo[1], NA_character_),
     "M_ia_exploratoria",
     ifelse(nrow(mejor_ia) > 0, mejor_ia$modelo[1], NA_character_),
-    "El target fenolico presenta senal modelable; Random Forest restringido y PLS/regularizados deben reportarse de forma complementaria. La matriz IA es solo exploratoria."
+    "Bajo validacion agrupada por muestra unica (identificador_quimico), Random Forest restringido es el modelo candidato con menor error en M_pura para el target fenolico (MAE=0.388 frente a 0.459 de la media de entrenamiento, R2 agregado=0.273), superando a ambas lineas base evaluadas en el mismo esquema. Un analisis de sensibilidad que excluye las dos muestras comerciales de la matriz (Dalwhinnie y Caol Ila) muestra que esta senal se revierte a R2 agregado negativo, por lo que el resultado se interpreta como una senal predictiva moderada y condicionada por el contraste comercial-experimental, no como evidencia general para whisky chileno. M_cata_individual muestra una senal positiva mas fuerte pero comparte el mismo posible confundente. La matriz IA es solo exploratoria."
   )
 )
 
@@ -410,7 +418,7 @@ texto_resultados <- tibble(
     "limitacion"
   ),
   texto_base = c(
-    "En la matriz pura, el desempeno bootstrap del mejor modelo para y_fenolico_comun permite sostener que existe una senal predictiva real entre composicion quimica y atributo fenolico. La comparacion con la media y con el modelo lineal reducido muestra que los modelos small data reducen el error de forma relevante.",
+    "En la matriz pura, bajo validacion agrupada por muestra unica (identificador_quimico), Random Forest restringido para y_fenolico_comun obtiene el menor error entre los modelos candidatos (MAE=0.388) y supera a ambas lineas base evaluadas en el mismo esquema de validacion (media de entrenamiento MAE=0.459, R2 agregado=0 por definicion; modelo lineal reducido MAE=0.721, R2 agregado negativo), con un R2 bootstrap agregado de 0.273. Un analisis de sensibilidad adicional muestra que esta senal depende en gran medida de las dos muestras comerciales incluidas en la matriz (Dalwhinnie y Caol Ila): al excluirlas, el R2 agregado se vuelve negativo. El resultado se reporta por lo tanto como una senal predictiva moderada y condicionada, no como evidencia robusta de una relacion quimico-sensorial generalizable a whisky chileno experimental.",
     "El escenario sin JU permite evaluar la sensibilidad del resultado al retirar la cata individual JU. Si el error disminuye en este escenario, la lectura correcta es que JU aumenta cobertura, pero tambien introduce heterogeneidad metodologica.",
     "La matriz expandida por evaluador debe interpretarse como complemento para variabilidad sensorial. No debe tratarse como aumento independiente de muestras quimicas, por lo que su desempeno no reemplaza a la matriz pura.",
     "La matriz IA corresponde a imputacion sensorial sintetica asistida por IA. Sus resultados permiten explorar patrones, pero no constituyen evidencia sensorial humana ni deben mezclarse con la matriz real.",

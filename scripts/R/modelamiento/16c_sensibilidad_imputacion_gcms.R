@@ -27,7 +27,7 @@
 # metodologico que vale la pena declarar explicitamente en la tesis.
 #
 # Mismo procedimiento de bootstrap agrupado que 16_validacion_bootstrap_cv.R
-# (100 iteraciones, remuestreo con reemplazo por unidad_analitica_id, mismos
+# (100 iteraciones, remuestreo con reemplazo por identificador_quimico, mismos
 # hiperparametros de ranger/glmnet), aplicado en paralelo a dos versiones de
 # M_pura: "completo" (32 predictores candidatos, incluye GC-MS con
 # imputacion por mediana) y "sin_gcms" (excluyendo por completo los
@@ -132,17 +132,25 @@ recortar_prediccion <- function(x) {
   pmin(pmax(as.numeric(x), limite_inferior_target), limite_superior_target)
 }
 
-calcular_metricas_vec <- function(y_obs, y_pred) {
+calcular_metricas_vec <- function(y_obs, y_pred, y_train = NULL) {
   ok <- !is.na(y_obs) & !is.na(y_pred)
   y_obs <- as.numeric(y_obs[ok])
   y_pred <- as.numeric(y_pred[ok])
 
   if (length(y_obs) == 0) {
-    return(data.frame(mae = NA_real_, rmse = NA_real_, r2 = NA_real_, spearman = NA_real_, bias = NA_real_))
+    return(data.frame(mae = NA_real_, rmse = NA_real_, r2 = NA_real_, sse = NA_real_, sst = NA_real_, spearman = NA_real_, bias = NA_real_))
+  }
+
+  # Referencia de R2 = media del pliegue de entrenamiento de esa iteracion,
+  # no del propio pliegue de prueba (ver 16_validacion_bootstrap_cv.R).
+  referencia <- if (!is.null(y_train) && length(stats::na.omit(as.numeric(y_train))) > 0) {
+    mean(as.numeric(y_train), na.rm = TRUE)
+  } else {
+    mean(y_obs)
   }
 
   error <- y_pred - y_obs
-  sst <- sum((y_obs - mean(y_obs))^2)
+  sst <- sum((y_obs - referencia)^2)
   sse <- sum(error^2)
   r2 <- ifelse(sst > 0, 1 - sse / sst, NA_real_)
   spearman <- if (length(y_obs) >= 3 && dplyr::n_distinct(y_obs) >= 2 && dplyr::n_distinct(y_pred) >= 2) {
@@ -152,7 +160,7 @@ calcular_metricas_vec <- function(y_obs, y_pred) {
   }
 
   data.frame(
-    mae = mean(abs(error)), rmse = sqrt(mean(error^2)), r2 = r2,
+    mae = mean(abs(error)), rmse = sqrt(mean(error^2)), r2 = r2, sse = sse, sst = sst,
     spearman = spearman, bias = mean(error), stringsAsFactors = FALSE
   )
 }
@@ -298,12 +306,16 @@ ajustar_rf_boot <- function(datos, iteracion) {
   recortar_prediccion(pred)
 }
 
-ajustar_ridge_boot <- function(datos) {
+ajustar_ridge_boot <- function(datos, escenario, target, iteracion) {
   n_train <- length(datos$y_train)
   p <- length(datos$predictores)
   if (n_train < 6 || p < 1) return(NULL)
 
   nfolds_inner <- min(5, max(3, floor(n_train / 2)))
+
+  # Misma formula de semilla que 16_validacion_bootstrap_cv.R, para que
+  # Ridge sea reproducible entre scripts (ver justificacion en ese archivo).
+  set.seed(1000000 + iteracion + sum(utf8ToInt(paste0(escenario, "_", target, "_ridge"))))
 
   fit <- tryCatch({
     glmnet::cv.glmnet(
@@ -326,7 +338,13 @@ ejecutar_bootstrap_modelo <- function(df_base, target, version, modelo) {
   k <- 1
   max_pred <- if (modelo == "random_forest_restringido") max_predictores_arboles else max_predictores_supervisados
 
+  # Misma semilla base que 16_validacion_bootstrap_cv.R para el escenario
+  # principal (M_pura, y_fenolico_comun), de modo que el split de cada
+  # iteracion b sea identico al de ese script para la version "completo".
+  semilla_base <- 123 + sum(utf8ToInt(paste0(escenario_id, "_", target)))
+
   for (b in seq_len(n_bootstrap)) {
+    set.seed(semilla_base + b)
     split_b <- crear_split_bootstrap_agrupado(df_base)
     if (is.null(split_b)) next
 
@@ -340,11 +358,11 @@ ejecutar_bootstrap_modelo <- function(df_base, target, version, modelo) {
     pred <- if (modelo == "random_forest_restringido") {
       ajustar_rf_boot(datos, b)
     } else {
-      ajustar_ridge_boot(datos)
+      ajustar_ridge_boot(datos, escenario_id, target, b)
     }
     if (is.null(pred)) next
 
-    met <- calcular_metricas_vec(test_b[[target]], pred)
+    met <- calcular_metricas_vec(test_b[[target]], pred, y_train = datos$y_train)
 
     resultados[[k]] <- data.frame(
       modelo = modelo, version = version, target = target, iteracion = b,
@@ -364,9 +382,27 @@ ejecutar_bootstrap_modelo <- function(df_base, target, version, modelo) {
 
 matriz_pura <- readxl::read_excel(ruta_datos_modelamiento, sheet = "01_pura")
 
+# De las 5 variables GC-MS candidatas, 2 no son propiedades quimicas del
+# destilado y se excluyen de raiz, en todas las versiones de este script
+# (no solo de "sin_gcms"), porque no tienen una lectura quimica valida como
+# predictor de caracter fenolico:
+# - x_gcms_area_valida_pct = 100 - ctrl_gcms_siloxano_pct (02_extraer_quimica.R):
+#   es un indicador de calidad del cromatograma (limpieza frente a
+#   contaminacion por siloxano), no una propiedad del whisky.
+# - x_gcms_aroma_fermentativo_pct = x_gcms_esteres_pct + x_gcms_aldehidos_pct
+#   (02b_clasificar_compuestos_gcms.R): es la suma exacta de otras dos
+#   variables ya incluidas como predictores (identidad matematica, no solo
+#   correlacion alta), por lo que incluirla junto a esteres y aldehidos es
+#   dependencia lineal perfecta por construccion, no aporta informacion
+#   nueva y explica el |r|=0.9982 maximo reportado para el bloque quimico
+#   (Tabla 4.1). Quedan como predictores GC-MS legitimos: esteres,
+#   fenolicos y aldehidos.
+matriz_pura <- matriz_pura %>%
+  select(-x_gcms_area_valida_pct, -x_gcms_aroma_fermentativo_pct)
+
 df_completo <- matriz_pura %>%
   mutate(across(all_of(obtener_predictores_x(matriz_pura)), convertir_numericamente))
-df_completo$grupo_validacion <- as.character(df_completo$unidad_analitica_id)
+df_completo$grupo_validacion <- as.character(df_completo$identificador_quimico)
 
 predictores_gcms <- grep("^x_gcms_", names(df_completo), value = TRUE)
 df_sin_gcms <- df_completo %>% select(-all_of(predictores_gcms))
@@ -430,6 +466,7 @@ if (nrow(metricas_sensibilidad) > 0) {
       mae_p95 = as.numeric(stats::quantile(mae, 0.95, na.rm = TRUE)),
       rmse_media = mean(rmse, na.rm = TRUE),
       r2_media = mean(r2, na.rm = TRUE),
+      r2_agregado = 1 - sum(sse, na.rm = TRUE) / sum(sst, na.rm = TRUE),
       spearman_media = mean(spearman, na.rm = TRUE),
       bias_media = mean(bias, na.rm = TRUE),
       .groups = "drop"
@@ -505,7 +542,7 @@ notas <- data.frame(
     "Metodologia de este script", "Interpretacion", "Limite"
   ),
   descripcion = c(
-    "Los mismos modelos (Ridge y Random Forest restringido) y el mismo procedimiento de validacion (bootstrap agrupado por unidad_analitica_id, 100 iteraciones), cada uno ajustado dos veces sobre M_pura: con todos los predictores candidatos (incluyendo GC-MS, imputados por mediana) y excluyendo por completo los predictores GC-MS.",
+    "Los mismos modelos (Ridge y Random Forest restringido) y el mismo procedimiento de validacion (bootstrap agrupado por identificador_quimico, 100 iteraciones), cada uno ajustado dos veces sobre M_pura: con todos los predictores candidatos (incluyendo GC-MS, imputados por mediana) y excluyendo por completo los predictores GC-MS.",
     paste0("M_pura completo: ", nrow(df_completo), " unidades, ", length(obtener_predictores_x(df_completo)), " predictores candidatos, incluyendo ", length(predictores_gcms), " variables GC-MS con cobertura real de entre ", min(cobertura_gcms$pct_cobertura), "% y ", max(cobertura_gcms$pct_cobertura), "% (el resto se completa por imputacion)."),
     paste0("M_pura sin los ", length(predictores_gcms), " predictores GC-MS: ", length(obtener_predictores_x(df_sin_gcms)), " predictores candidatos, todos con cobertura real igual o superior a la usada en el resto del pipeline."),
     "En 14_modelo_base.R, 15_modelos_small_data.R y 16_validacion_bootstrap_cv.R, cada predictor numerico se imputa con la mediana calculada unicamente sobre el pliegue de entrenamiento de esa iteracion (nunca sobre el pliegue de prueba), y esa misma mediana se aplica tanto a train como a test. Es la misma logica de imputacion usada en este script de sensibilidad.",

@@ -159,15 +159,15 @@ recortar_prediccion <- function(x) {
 
 obtener_id_validacion <- function(df, escenario) {
   # Se replica la logica usada en el modelo base para mantener comparabilidad.
-  # En la matriz expandida se agrupa por unidad quimica para que evaluadores
-  # de la misma unidad no queden separados entre entrenamiento y prueba.
-  if (escenario == "M_expandida_evaluador") {
-    if ("unidad_analitica_id" %in% names(df)) return(as.character(df$unidad_analitica_id))
-    if ("muestra_base" %in% names(df)) return(as.character(df$muestra_base))
-  }
-
-  if ("unidad_analitica_id" %in% names(df)) return(as.character(df$unidad_analitica_id))
+  # Se agrupa por identificador_quimico y no por muestra_base ni por
+  # unidad_analitica_id (ver justificacion detallada en 14_modelo_base.R):
+  # muestra_base deja dos muestras comerciales, Dalwhinnie y Caol Ila,
+  # repartidas en dos codigos distintos cada una porque se midieron en
+  # GC-FID y en GC-MS por separado, e identificador_quimico es la identidad
+  # ya resuelta entre bloques.
+  if ("identificador_quimico" %in% names(df)) return(as.character(df$identificador_quimico))
   if ("muestra_base" %in% names(df)) return(as.character(df$muestra_base))
+  if ("unidad_analitica_id" %in% names(df)) return(as.character(df$unidad_analitica_id))
   as.character(seq_len(nrow(df)))
 }
 
@@ -815,6 +815,31 @@ for (i in seq_len(nrow(escenarios))) {
   esc <- escenarios$escenario[i]
   hoja <- escenarios$hoja[i]
   datos_escenarios[[esc]] <- readxl::read_excel(ruta_datos_modelamiento, sheet = hoja)
+}
+
+# Las hojas de M_pura, M_expandida_evaluador y M_cata_individual comparten
+# las mismas 32 columnas x_ candidatas (13 GC-FID + 13 JU + 1 Folin + 5
+# GC-MS), pero el conjunto de predictores DECLARADO para esos escenarios
+# excluye deliberadamente GC-MS (seccion imp:consideraciones): M_pura y
+# M_expandida_evaluador usan solo los 13 de GC-FID, y M_cata_individual
+# agrega los 13 de JU (26 en total), sin GC-MS. Sin esta exclusion, el
+# selector de predictores por correlacion puede elegir GC-MS en algunas
+# particiones, apartando los resultados del escenario de 13/26 predictores
+# usado en el resto de la tesis (Tabla 4.1, mismo bug corregido en
+# 13_diagnostico_modelamiento.R, 16_validacion_bootstrap_cv.R, 16b, 16c,
+# 16d, 16f y 16h). M_ia_exploratoria no se toca.
+if (!is.null(datos_escenarios[["M_pura"]])) {
+  cols_excluir <- setdiff(obtener_predictores_x(datos_escenarios[["M_pura"]]), grep("^x_gcfid_", names(datos_escenarios[["M_pura"]]), value = TRUE))
+  datos_escenarios[["M_pura"]] <- datos_escenarios[["M_pura"]][, setdiff(names(datos_escenarios[["M_pura"]]), cols_excluir), drop = FALSE]
+}
+if (!is.null(datos_escenarios[["M_expandida_evaluador"]])) {
+  cols_excluir <- setdiff(obtener_predictores_x(datos_escenarios[["M_expandida_evaluador"]]), grep("^x_gcfid_", names(datos_escenarios[["M_expandida_evaluador"]]), value = TRUE))
+  datos_escenarios[["M_expandida_evaluador"]] <- datos_escenarios[["M_expandida_evaluador"]][, setdiff(names(datos_escenarios[["M_expandida_evaluador"]]), cols_excluir), drop = FALSE]
+}
+if (!is.null(datos_escenarios[["M_cata_individual"]])) {
+  predictores_gcfid_ju <- grep("^x_gcfid_|^x_ju_", names(datos_escenarios[["M_cata_individual"]]), value = TRUE)
+  cols_excluir <- setdiff(obtener_predictores_x(datos_escenarios[["M_cata_individual"]]), predictores_gcfid_ju)
+  datos_escenarios[["M_cata_individual"]] <- datos_escenarios[["M_cata_individual"]][, setdiff(names(datos_escenarios[["M_cata_individual"]]), cols_excluir), drop = FALSE]
 }
 
 # ------------------------------------------------------------

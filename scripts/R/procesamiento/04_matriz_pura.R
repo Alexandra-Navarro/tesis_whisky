@@ -369,6 +369,17 @@ diccionario <- data.frame(
   stringsAsFactors = FALSE
 )
 
+#Se generan los datos importantes de medidas
+#library(openxlsx)
+#d <- read.xlsx("data/procesamiento/matriz_pura.xlsx", sheet = "02_modelamiento")
+
+#for (t in c("y_fenolico_comun", "y_frutal_comun")) {
+# v <- d[[t]]
+# v <- v[!is.na(v)]
+# cat(sprintf("%s: n=%d media=%.3f DE=%.3f min=%.3f max=%.3f\n",
+#             t, length(v), mean(v), sd(v), min(v), max(v)))
+#}
+
 # Generar archivo de salida Excel
 
 ruta_salida <- guardar_excel(

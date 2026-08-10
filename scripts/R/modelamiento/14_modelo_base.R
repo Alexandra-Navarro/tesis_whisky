@@ -92,13 +92,18 @@ obtener_predictores_x <- function(df) {
 }
 
 obtener_id_validacion <- function(df, escenario) {
-  if (escenario == "M_expandida_evaluador") {
-    if ("unidad_analitica_id" %in% names(df)) return(as.character(df$unidad_analitica_id))
-    if ("muestra_base" %in% names(df)) return(as.character(df$muestra_base))
-  }
-
-  if ("unidad_analitica_id" %in% names(df)) return(as.character(df$unidad_analitica_id))
+  # Se agrupa por identificador_quimico y no por muestra_base ni por
+  # unidad_analitica_id. muestra_base es el codigo interno de cada bloque
+  # analitico, y dos muestras comerciales (Dalwhinnie y Caol Ila) quedan
+  # registradas con dos codigos muestra_base distintos porque se midieron
+  # tanto en GC-FID (M4, M7) como en GC-MS (C1, C2). identificador_quimico
+  # es la identidad real ya resuelta entre bloques, por lo que es la unica
+  # variable que evita que una misma muestra fisica quede repartida entre
+  # entrenamiento y prueba. unidad_analitica_id tampoco sirve porque cada
+  # unidad analitica es su propia replica dentro de una muestra.
+  if ("identificador_quimico" %in% names(df)) return(as.character(df$identificador_quimico))
   if ("muestra_base" %in% names(df)) return(as.character(df$muestra_base))
+  if ("unidad_analitica_id" %in% names(df)) return(as.character(df$unidad_analitica_id))
   as.character(seq_len(nrow(df)))
 }
 
@@ -250,7 +255,14 @@ calcular_metricas_grupo <- function(df_m) {
   }
 
   error <- df_m$y_pred - df_m$y_obs
-  sst <- sum((df_m$y_obs - mean(df_m$y_obs))^2)
+  # R2 definido segun la Ecuacion 2.3 (seccion imp:metricas): la referencia
+  # es la media del pliegue de ENTRENAMIENTO de cada iteracion (columna
+  # y_train_mean, fijada al construir las predicciones), no la media del
+  # conjunto de prueba agrupado. Bajo esta definicion, un modelo que predice
+  # exactamente la media de entrenamiento (media_entrenamiento) tiene SSE
+  # identico a SST por construccion, y su R2 da 0 exacto.
+  referencia <- if ("y_train_mean" %in% names(df_m)) df_m$y_train_mean else mean(df_m$y_obs)
+  sst <- sum((df_m$y_obs - referencia)^2)
   sse <- sum(error^2)
   r2 <- ifelse(sst > 0, 1 - sse / sst, NA_real_)
   modelo_actual <- unique(df_m$modelo)[1]
@@ -438,6 +450,11 @@ validar_modelos_base <- function(df, escenario, target) {
       y_obs = test[[target]],
       y_pred_raw = media_train,
       y_pred = recortar_prediccion(media_train),
+      # Referencia para el R2 (Ecuacion 2.3): SIEMPRE la media del pliegue de
+      # entrenamiento de esta iteracion (excluyendo el grupo evaluado), nunca
+      # la media del conjunto de prueba o del conjunto agrupado de
+      # predicciones. Ver calcular_metricas_grupo().
+      y_train_mean = media_train,
       n_train = nrow(train),
       predictores_usados = "ninguno",
       stringsAsFactors = FALSE
@@ -477,6 +494,10 @@ validar_modelos_base <- function(df, escenario, target) {
       y_obs = test[[target]],
       y_pred_raw = pred_lineal,
       y_pred = recortar_prediccion(pred_lineal),
+      # Misma referencia que el modelo nulo (media del pliegue de
+      # entrenamiento de esta iteracion), para que el R2 de ambos modelos
+      # base se calcule con la misma definicion declarada en la Ecuacion 2.3.
+      y_train_mean = media_train,
       n_train = nrow(train),
       predictores_usados = predictores_txt,
       stringsAsFactors = FALSE
@@ -521,6 +542,32 @@ for (i in seq_len(nrow(escenarios))) {
   esc <- escenarios$escenario[i]
   hoja <- escenarios$hoja[i]
   datos_escenarios[[esc]] <- readxl::read_excel(ruta_datos_modelamiento, sheet = hoja)
+}
+
+# Las hojas de M_pura, M_expandida_evaluador y M_cata_individual comparten
+# las mismas 32 columnas x_ candidatas (13 GC-FID + 13 JU + 1 Folin + 5
+# GC-MS), pero el conjunto de predictores DECLARADO para esos escenarios
+# excluye deliberadamente GC-MS (seccion imp:consideraciones): M_pura y
+# M_expandida_evaluador usan solo los 13 de GC-FID, y M_cata_individual
+# agrega los 13 de JU (26 en total), sin GC-MS. Sin esta exclusion, el
+# selector de predictores lineales por correlacion puede elegir GC-MS en
+# algunas particiones, apartando los resultados del escenario de 13/26
+# predictores usado en el resto de la tesis (Tabla 4.1, mismo bug corregido
+# en 13_diagnostico_modelamiento.R, 15_modelos_small_data.R,
+# 16_validacion_bootstrap_cv.R, 16b, 16c, 16d, 16f y 16h).
+# M_ia_exploratoria no se toca.
+if (!is.null(datos_escenarios[["M_pura"]])) {
+  cols_excluir <- setdiff(obtener_predictores_x(datos_escenarios[["M_pura"]]), grep("^x_gcfid_", names(datos_escenarios[["M_pura"]]), value = TRUE))
+  datos_escenarios[["M_pura"]] <- datos_escenarios[["M_pura"]][, setdiff(names(datos_escenarios[["M_pura"]]), cols_excluir), drop = FALSE]
+}
+if (!is.null(datos_escenarios[["M_expandida_evaluador"]])) {
+  cols_excluir <- setdiff(obtener_predictores_x(datos_escenarios[["M_expandida_evaluador"]]), grep("^x_gcfid_", names(datos_escenarios[["M_expandida_evaluador"]]), value = TRUE))
+  datos_escenarios[["M_expandida_evaluador"]] <- datos_escenarios[["M_expandida_evaluador"]][, setdiff(names(datos_escenarios[["M_expandida_evaluador"]]), cols_excluir), drop = FALSE]
+}
+if (!is.null(datos_escenarios[["M_cata_individual"]])) {
+  predictores_gcfid_ju <- grep("^x_gcfid_|^x_ju_", names(datos_escenarios[["M_cata_individual"]]), value = TRUE)
+  cols_excluir <- setdiff(obtener_predictores_x(datos_escenarios[["M_cata_individual"]]), predictores_gcfid_ju)
+  datos_escenarios[["M_cata_individual"]] <- datos_escenarios[["M_cata_individual"]][, setdiff(names(datos_escenarios[["M_cata_individual"]]), cols_excluir), drop = FALSE]
 }
 
 # ------------------------------------------------------------

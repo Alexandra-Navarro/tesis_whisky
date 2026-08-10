@@ -14,7 +14,12 @@
 # - Comparar resultados bootstrap con la validacion cruzada previa.
 #
 # Importante:
-# - La matriz expandida se valida agrupando por unidad analitica.
+# - Todos los escenarios se validan agrupando por identificador_quimico, para
+#   que ninguna replica tecnica ni sesion repetida de una misma muestra quede
+#   dividida entre entrenamiento y prueba dentro de una misma iteracion.
+#   muestra_base no basta porque las dos muestras comerciales (Dalwhinnie y
+#   Caol Ila) quedan repartidas en dos codigos internos distintos, uno por
+#   GC-FID y otro por GC-MS (ver obtener_id_validacion() mas abajo).
 # - La matriz IA se mantiene como escenario exploratorio.
 # - Random Forest y Gradient Boosting son opcionales: si no existen paquetes,
 #   se omiten sin detener el flujo.
@@ -87,6 +92,7 @@ min_n_target_modelable <- 8
 min_n_correlacion <- 5
 max_predictores_supervisados <- 15
 max_predictores_arboles <- 10
+max_predictores_lineal <- 3
 limite_inferior_target <- 0
 limite_superior_target <- 5
 
@@ -101,8 +107,13 @@ shrinkage_gbm <- 0.05
 # Targets que se validaran si tienen datos suficientes.
 targets_a_validar <- c("y_fenolico_comun", "y_frutal_comun")
 
+# Modelos base, evaluados dentro del mismo bucle de bootstrap agrupado que
+# los candidatos para que sean directamente comparables (secciones
+# \ref{imp:modelamiento} y \ref{res:desempeno}).
+modelos_base_a_validar <- c("media_entrenamiento", "lineal_reducido")
+
 # Modelos candidatos.
-modelos_a_validar <- c("ridge", "lasso", "elastic_net", "pls")
+modelos_a_validar <- c(modelos_base_a_validar, "ridge", "lasso", "elastic_net", "pls")
 if (paquete_ranger_disponible) modelos_a_validar <- c(modelos_a_validar, "random_forest_restringido")
 if (paquete_gbm_disponible) modelos_a_validar <- c(modelos_a_validar, "gradient_boosting_restringido")
 
@@ -139,13 +150,15 @@ recortar_prediccion <- function(x) {
 }
 
 obtener_id_validacion <- function(df, escenario) {
-  if (escenario == "M_expandida_evaluador") {
-    if ("unidad_analitica_id" %in% names(df)) return(as.character(df$unidad_analitica_id))
-    if ("muestra_base" %in% names(df)) return(as.character(df$muestra_base))
-  }
-
-  if ("unidad_analitica_id" %in% names(df)) return(as.character(df$unidad_analitica_id))
+  # Se agrupa por identificador_quimico y no por muestra_base ni por
+  # unidad_analitica_id (ver justificacion detallada en 14_modelo_base.R):
+  # muestra_base deja dos muestras comerciales, Dalwhinnie y Caol Ila,
+  # repartidas en dos codigos distintos cada una porque se midieron en
+  # GC-FID y en GC-MS por separado, e identificador_quimico es la identidad
+  # ya resuelta entre bloques.
+  if ("identificador_quimico" %in% names(df)) return(as.character(df$identificador_quimico))
   if ("muestra_base" %in% names(df)) return(as.character(df$muestra_base))
+  if ("unidad_analitica_id" %in% names(df)) return(as.character(df$unidad_analitica_id))
   as.character(seq_len(nrow(df)))
 }
 
@@ -188,17 +201,28 @@ resumir_target_escenario <- function(df, escenario, target) {
   )
 }
 
-calcular_metricas_vec <- function(y_obs, y_pred) {
+calcular_metricas_vec <- function(y_obs, y_pred, y_train = NULL) {
   ok <- !is.na(y_obs) & !is.na(y_pred)
   y_obs <- as.numeric(y_obs[ok])
   y_pred <- as.numeric(y_pred[ok])
 
   if (length(y_obs) == 0) {
-    return(data.frame(mae = NA_real_, rmse = NA_real_, r2 = NA_real_, spearman = NA_real_, bias = NA_real_))
+    return(data.frame(mae = NA_real_, rmse = NA_real_, r2 = NA_real_, sse = NA_real_, sst = NA_real_, spearman = NA_real_, bias = NA_real_))
+  }
+
+  # La referencia de R2 es la media del pliegue de entrenamiento de esa misma
+  # iteracion, no la media del propio pliegue de prueba. Usar la media del
+  # pliegue de prueba como referencia hace que el R2 de cada iteracion dependa
+  # de cuan pocos grupos quedaron fuera de bolsa en esa iteracion especifica,
+  # e infla artificialmente su varianza entre iteraciones.
+  referencia <- if (!is.null(y_train) && length(stats::na.omit(as.numeric(y_train))) > 0) {
+    mean(as.numeric(y_train), na.rm = TRUE)
+  } else {
+    mean(y_obs)
   }
 
   error <- y_pred - y_obs
-  sst <- sum((y_obs - mean(y_obs))^2)
+  sst <- sum((y_obs - referencia)^2)
   sse <- sum(error^2)
   r2 <- ifelse(sst > 0, 1 - sse / sst, NA_real_)
   spearman <- if (length(y_obs) >= 3 && dplyr::n_distinct(y_obs) >= 2 && dplyr::n_distinct(y_pred) >= 2) {
@@ -211,6 +235,8 @@ calcular_metricas_vec <- function(y_obs, y_pred) {
     mae = mean(abs(error)),
     rmse = sqrt(mean(error^2)),
     r2 = r2,
+    sse = sse,
+    sst = sst,
     spearman = spearman,
     bias = mean(error),
     stringsAsFactors = FALSE
@@ -368,6 +394,13 @@ ajustar_glmnet_boot <- function(datos, alpha, nombre_modelo, escenario, target, 
   if (n_train < 6 || p < 1) return(NULL)
 
   nfolds_inner <- min(5, max(3, floor(n_train / 2)))
+
+  # cv.glmnet no tiene parametro de semilla propio, su asignacion de pliegues
+  # internos depende del estado global de aleatoriedad de R al momento de la
+  # llamada. Se fija aqui, en funcion de (escenario, target, modelo,
+  # iteracion), para que el ajuste sea reproducible sin importar que otros
+  # modelos se hayan ajustado antes en esa misma iteracion.
+  set.seed(1000000 + iteracion + sum(utf8ToInt(paste0(escenario, "_", target, "_", nombre_modelo))))
 
   fit <- tryCatch({
     glmnet::cv.glmnet(
@@ -590,7 +623,53 @@ ajustar_gbm_boot <- function(datos, escenario, target, iteracion, test) {
   )
 }
 
+ajustar_media_boot <- function(datos) {
+  n_train <- length(datos$y_train)
+  if (n_train < 1) return(NULL)
+
+  media_train <- mean(datos$y_train, na.rm = TRUE)
+  pred <- rep(media_train, length(datos$y_test))
+
+  list(
+    pred = recortar_prediccion(pred),
+    importancia = data.frame(),
+    detalle = paste0("media_entrenamiento=", round(media_train, 4))
+  )
+}
+
+ajustar_lineal_boot <- function(datos, escenario, target, iteracion, test) {
+  n_train <- length(datos$y_train)
+  p <- length(datos$predictores)
+  if (n_train < 6 || p < 1) return(NULL)
+
+  df_train <- as.data.frame(datos$train[, datos$predictores, drop = FALSE])
+  df_test <- as.data.frame(datos$test[, datos$predictores, drop = FALSE])
+  df_train[[target]] <- datos$y_train
+
+  formula_lm <- stats::as.formula(paste(bt(target), "~", paste(bt(datos$predictores), collapse = " + ")))
+
+  fit <- tryCatch(stats::lm(formula_lm, data = df_train), error = function(e) NULL)
+  if (is.null(fit)) return(NULL)
+
+  pred <- tryCatch(
+    as.numeric(stats::predict(fit, newdata = df_test)),
+    error = function(e) rep(mean(datos$y_train), nrow(df_test))
+  )
+
+  list(
+    pred = recortar_prediccion(pred),
+    importancia = data.frame(),
+    detalle = paste0("predictores=", paste(datos$predictores, collapse = "; "))
+  )
+}
+
 ajustar_modelo_boot <- function(modelo, datos, escenario, target, iteracion, test) {
+  if (modelo == "media_entrenamiento") {
+    return(ajustar_media_boot(datos))
+  }
+  if (modelo == "lineal_reducido") {
+    return(ajustar_lineal_boot(datos, escenario, target, iteracion, test))
+  }
   if (modelo == "ridge") {
     return(ajustar_glmnet_boot(datos, alpha = 0, nombre_modelo = "ridge", escenario, target, iteracion, test))
   }
@@ -636,6 +715,33 @@ escenarios <- lapply(names(mapa_escenarios), function(hoja) {
 })
 names(escenarios) <- unname(mapa_escenarios)
 
+# Las hojas de M_pura, M_expandida_evaluador y M_cata_individual comparten
+# las mismas 32 columnas x_ candidatas (13 GC-FID + 13 JU + 1 Folin + 5
+# GC-MS), pero el conjunto de predictores DECLARADO para esos escenarios
+# excluye deliberadamente GC-MS (seccion imp:consideraciones): M_pura y
+# M_expandida_evaluador usan solo los 13 de GC-FID, y M_cata_individual
+# agrega los 13 de JU (26 en total), sin GC-MS. Sin esta exclusion, el
+# selector de predictores por correlacion puede elegir GC-MS en algunas
+# iteraciones (tiene cobertura real de 23.5% en M_pura), apartando los
+# resultados del escenario de 13/26 predictores usado en el resto de la
+# tesis (Tabla 4.1, mismo bug corregido en 13_diagnostico_modelamiento.R,
+# 16b, 16c, 16d, 16f y 16h). M_ia_exploratoria no se toca: GC-MS no pasa el
+# chequeo de varianza dentro de esa hoja por su propia escasez de datos, no
+# por una exclusion explicita.
+if (!is.null(escenarios[["M_pura"]])) {
+  cols_excluir <- setdiff(obtener_predictores_x(escenarios[["M_pura"]]), grep("^x_gcfid_", names(escenarios[["M_pura"]]), value = TRUE))
+  escenarios[["M_pura"]] <- escenarios[["M_pura"]][, setdiff(names(escenarios[["M_pura"]]), cols_excluir), drop = FALSE]
+}
+if (!is.null(escenarios[["M_expandida_evaluador"]])) {
+  cols_excluir <- setdiff(obtener_predictores_x(escenarios[["M_expandida_evaluador"]]), grep("^x_gcfid_", names(escenarios[["M_expandida_evaluador"]]), value = TRUE))
+  escenarios[["M_expandida_evaluador"]] <- escenarios[["M_expandida_evaluador"]][, setdiff(names(escenarios[["M_expandida_evaluador"]]), cols_excluir), drop = FALSE]
+}
+if (!is.null(escenarios[["M_cata_individual"]])) {
+  predictores_gcfid_ju <- grep("^x_gcfid_|^x_ju_", names(escenarios[["M_cata_individual"]]), value = TRUE)
+  cols_excluir <- setdiff(obtener_predictores_x(escenarios[["M_cata_individual"]]), predictores_gcfid_ju)
+  escenarios[["M_cata_individual"]] <- escenarios[["M_cata_individual"]][, setdiff(names(escenarios[["M_cata_individual"]]), cols_excluir), drop = FALSE]
+}
+
 # ------------------------------------------------------------
 # 5. Ejecucion bootstrap
 # ------------------------------------------------------------
@@ -665,13 +771,17 @@ if (nrow(plan_bootstrap) == 0) {
 
     message("Validacion bootstrap: ", escenario_i, " - ", target_i)
 
-    # Semilla fija por combinacion escenario-target (no por posicion en el loop),
-    # para que el resultado no dependa del orden alfabetico en que se procesan
-    # los escenarios (p.ej. al renombrar un escenario cambia su posicion en
-    # arrange(escenario, target), lo que antes alteraba el stream aleatorio
-    # compartido y hacia que el "mejor modelo" pareciera cambiar sin que
-    # cambiaran los datos).
-    set.seed(123 + sum(utf8ToInt(paste0(escenario_i, "_", target_i))))
+    # Semilla base fija por combinacion escenario-target (no por posicion en
+    # el loop), para que el resultado no dependa del orden alfabetico en que
+    # se procesan los escenarios. A partir de esta base, cada iteracion b usa
+    # su propia semilla (semilla_base + b), fijada de nuevo justo antes de
+    # generar el split de esa iteracion. Esto hace que el split de la
+    # iteracion b dependa solo de (escenario, target, b) y no de cuantos
+    # modelos se ajustaron antes en esa misma iteracion ni en iteraciones
+    # previas, lo que permite que 16b/16c/16d (con menos modelos por
+    # iteracion) reproduzcan exactamente los mismos splits que este script
+    # para el mismo escenario, target e iteracion.
+    semilla_base <- 123 + sum(utf8ToInt(paste0(escenario_i, "_", target_i)))
 
     df_base <- preparar_df_modelo(escenarios[[escenario_i]], escenario_i, target_i)
 
@@ -690,6 +800,7 @@ if (nrow(plan_bootstrap) == 0) {
     }
 
     for (b in seq_len(n_bootstrap)) {
+      set.seed(semilla_base + b)
       split_b <- crear_split_bootstrap_agrupado(df_base)
       if (is.null(split_b)) next
 
@@ -697,8 +808,13 @@ if (nrow(plan_bootstrap) == 0) {
       test_b <- split_b$test
 
       for (modelo_i in modelos_a_validar) {
-        max_pred <- ifelse(modelo_i %in% c("random_forest_restringido", "gradient_boosting_restringido"),
-                           max_predictores_arboles, max_predictores_supervisados)
+        max_pred <- if (modelo_i %in% c("random_forest_restringido", "gradient_boosting_restringido")) {
+          max_predictores_arboles
+        } else if (modelo_i == "lineal_reducido") {
+          max_predictores_lineal
+        } else {
+          max_predictores_supervisados
+        }
 
         predictores <- seleccionar_predictores_supervisados(train_b, target_i, max_pred = max_pred)
         datos <- preparar_matrices_x(train_b, test_b, target_i, predictores)
@@ -733,7 +849,7 @@ if (nrow(plan_bootstrap) == 0) {
           next
         }
 
-        met <- calcular_metricas_vec(test_b[[target_i]], ajuste$pred)
+        met <- calcular_metricas_vec(test_b[[target_i]], ajuste$pred, y_train = datos$y_train)
 
         metricas_bootstrap[[contador_resultados]] <- data.frame(
           escenario = escenario_i,
@@ -802,7 +918,11 @@ if (nrow(metricas_bootstrap) > 0) {
       rmse_p50 = as.numeric(stats::quantile(rmse, 0.50, na.rm = TRUE)),
       rmse_p95 = as.numeric(stats::quantile(rmse, 0.95, na.rm = TRUE)),
       r2_media = mean(r2, na.rm = TRUE),
+      r2_p05 = as.numeric(stats::quantile(r2, 0.05, na.rm = TRUE)),
       r2_p50 = as.numeric(stats::quantile(r2, 0.50, na.rm = TRUE)),
+      r2_p95 = as.numeric(stats::quantile(r2, 0.95, na.rm = TRUE)),
+      r2_pct_positivo = round(100 * mean(r2 > 0, na.rm = TRUE), 1),
+      r2_agregado = 1 - sum(sse, na.rm = TRUE) / sum(sst, na.rm = TRUE),
       spearman_media = mean(spearman, na.rm = TRUE),
       spearman_p50 = as.numeric(stats::quantile(spearman, 0.50, na.rm = TRUE)),
       bias_media = mean(bias, na.rm = TRUE),
@@ -816,8 +936,16 @@ if (nrow(metricas_bootstrap) > 0) {
         mae_ic90_ancho <= 0.50 ~ "media",
         TRUE ~ "baja"
       ),
-      ranking_mae = ave(mae_media, escenario, target, FUN = function(x) rank(x, ties.method = "min"))
+      # media_entrenamiento y lineal_reducido se evaluan en el mismo bucle de
+      # bootstrap que los candidatos para ser directamente comparables (OE4,
+      # seccion \ref{res:desempeno}), pero no compiten por el ranking de
+      # "mejor modelo": ese ranking es solo entre los seis candidatos.
+      es_candidato = !modelo %in% c("media_entrenamiento", "lineal_reducido"),
+      mae_para_ranking = ifelse(es_candidato, mae_media, Inf),
+      ranking_mae = ave(mae_para_ranking, escenario, target, FUN = function(x) rank(x, ties.method = "min")),
+      ranking_mae = ifelse(es_candidato, ranking_mae, NA_real_)
     ) %>%
+    select(-mae_para_ranking) %>%
     arrange(escenario, target, ranking_mae, mae_media)
 }
 

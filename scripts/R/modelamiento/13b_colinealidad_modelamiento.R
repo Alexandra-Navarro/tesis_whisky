@@ -448,6 +448,33 @@ for (i in seq_len(nrow(escenarios))) {
   datos_escenarios[[esc]] <- readxl::read_excel(ruta_datos_modelamiento, sheet = hoja)
 }
 
+# Las hojas de M_pura, M_expandida_evaluador y M_cata_individual comparten
+# las mismas 32 columnas x_ candidatas (13 GC-FID + 13 JU + 1 Folin + 5
+# GC-MS), pero el conjunto de predictores DECLARADO para esos escenarios
+# excluye deliberadamente GC-MS (seccion imp:consideraciones): M_pura y
+# M_expandida_evaluador usan solo los 13 de GC-FID, y M_cata_individual
+# agrega los 13 de JU (26 en total), sin GC-MS. Sin esta exclusion, el
+# diagnostico de colinealidad tambien evalua los pares de GC-MS (incluida
+# la identidad exacta aroma_fermentativo = esteres + aldehidos, seccion
+# res:sensibilidad), inflando el maximo |r| y el conteo de predictores
+# usables muy por encima de los 13/26 declarados en el resto de la tesis
+# (Tabla 4.1; mismo bug corregido en 13_diagnostico_modelamiento.R,
+# 14_modelo_base.R, 15_modelos_small_data.R, 16_validacion_bootstrap_cv.R,
+# 16b, 16c, 16d, 16f y 16h). M_ia_exploratoria y M_quimica no se tocan.
+if (!is.null(datos_escenarios[["M_pura"]])) {
+  cols_excluir <- setdiff(obtener_predictores_x(datos_escenarios[["M_pura"]]), grep("^x_gcfid_", names(datos_escenarios[["M_pura"]]), value = TRUE))
+  datos_escenarios[["M_pura"]] <- datos_escenarios[["M_pura"]][, setdiff(names(datos_escenarios[["M_pura"]]), cols_excluir), drop = FALSE]
+}
+if (!is.null(datos_escenarios[["M_expandida_evaluador"]])) {
+  cols_excluir <- setdiff(obtener_predictores_x(datos_escenarios[["M_expandida_evaluador"]]), grep("^x_gcfid_", names(datos_escenarios[["M_expandida_evaluador"]]), value = TRUE))
+  datos_escenarios[["M_expandida_evaluador"]] <- datos_escenarios[["M_expandida_evaluador"]][, setdiff(names(datos_escenarios[["M_expandida_evaluador"]]), cols_excluir), drop = FALSE]
+}
+if (!is.null(datos_escenarios[["M_cata_individual"]])) {
+  predictores_gcfid_ju <- grep("^x_gcfid_|^x_ju_", names(datos_escenarios[["M_cata_individual"]]), value = TRUE)
+  cols_excluir <- setdiff(obtener_predictores_x(datos_escenarios[["M_cata_individual"]]), predictores_gcfid_ju)
+  datos_escenarios[["M_cata_individual"]] <- datos_escenarios[["M_cata_individual"]][, setdiff(names(datos_escenarios[["M_cata_individual"]]), cols_excluir), drop = FALSE]
+}
+
 # -------------------------------------------------------------------------
 # 3. Cálculo de colinealidad
 # -------------------------------------------------------------------------

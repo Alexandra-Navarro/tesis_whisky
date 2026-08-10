@@ -114,6 +114,27 @@ for (i in seq_len(nrow(escenarios_def))) {
   datos_escenarios[[escenarios_def$escenario[i]]] <- readxl::read_excel(ruta_datos_modelamiento, sheet = escenarios_def$hoja[i])
 }
 
+# Las hojas de M_pura, M_expandida_evaluador y M_cata_individual comparten
+# las mismas 32 columnas x_ candidatas (13 GC-FID + 13 JU + 1 Folin + 5
+# GC-MS), pero el conjunto de predictores DECLARADO para esos tres
+# escenarios excluye deliberadamente GC-MS (seccion imp:consideraciones):
+# M_pura y M_expandida_evaluador usan solo los 13 de GC-FID, y
+# M_cata_individual agrega los 13 de JU (26 en total), sin GC-MS. Sin esta
+# exclusion, predictor_usable() cuenta tambien los 5 de GC-MS (tienen
+# suficiente cobertura real como para pasar el chequeo basico de varianza),
+# inflando n_predictores_usables a 18 y 31 respectivamente, en vez de los
+# 13 y 26 declarados en el resto de la tesis (Tabla 4.1). M_ia_exploratoria
+# y M_quimica no se tocan: su conteo ya coincide con lo declarado, porque
+# GC-MS no pasa el chequeo de varianza dentro de esas hojas por su propia
+# escasez de datos, no por una exclusion explicita.
+escenarios_excluir_gcms <- c("M_pura", "M_expandida_evaluador", "M_cata_individual")
+for (esc in escenarios_excluir_gcms) {
+  if (!is.null(datos_escenarios[[esc]])) {
+    cols_gcms <- grep("^x_gcms_", names(datos_escenarios[[esc]]), value = TRUE)
+    datos_escenarios[[esc]] <- datos_escenarios[[esc]] %>% select(-all_of(cols_gcms))
+  }
+}
+
 # -------------------------------------------------------------------------
 # 3. Viabilidad estadistica por escenario x target
 # -------------------------------------------------------------------------

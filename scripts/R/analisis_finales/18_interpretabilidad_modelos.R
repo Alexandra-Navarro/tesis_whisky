@@ -417,7 +417,7 @@ graficos_generados <- data.frame(
 # Grafico 1: consenso de variables M_pura fenolico.
 ruta_graf_1 <- file.path(dir_outputs_interpretabilidad, "01_consenso_variables_M_pura_y_fenolico.png")
 plot_1 <- consenso_variables %>%
-  filter(escenario == escenario_principal, target == target_principal, ranking_consenso <= 12) %>%
+  filter(escenario == escenario_principal, target == target_principal, ranking_consenso <= 13) %>%
   mutate(etiqueta = limpiar_nombre_predictor(predictor))
 
 if (nrow(plot_1) > 0) {

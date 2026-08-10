@@ -331,16 +331,27 @@ completitud_bloque_target <- sensorial_individual %>%
   pivot_longer(cols = -bloque_sensorial, names_to = "target", values_to = "pct_completo")
 
 p_completitud <- ggplot(completitud_bloque_target, aes(x = target, y = bloque_sensorial, fill = pct_completo)) +
-  geom_tile(color = "white") +
+  geom_tile(color = "white", linewidth = 0.7) +
   scale_fill_gradient(low = "#F4CCCC", high = color_acento, limits = c(0, 1), labels = scales::percent) +
   tema_eda +
+  theme(
+    axis.text.x = element_text(size = 10, angle = 90, hjust = 1, vjust = 0.5),
+    axis.text.y = element_text(size = 11),
+    plot.title = element_text(size = 14),
+    plot.subtitle = element_text(size = 11, color = "grey35"),
+    legend.title = element_text(size = 11),
+    legend.text = element_text(size = 10)
+  ) +
   labs(
     title = "Mapa de calor de completitud de targets sensoriales por bloque de cata",
     subtitle = "Cada formulario mide un subconjunto distinto de descriptores; los vacios son estructurales.",
     x = NULL, y = NULL, fill = "% completo"
   )
 
-ruta_completitud <- guardar_grafico_seguro(p_completitud, "02_mapa_completitud.png", ancho = 11, alto = 5)
+# Imagen ampliada (17x8 in) para que las 33 etiquetas de targets sean
+# legibles a tamano impreso, manteniendo la paleta y el estilo original
+# (rediseno de tamano/tipografia, Figura 3.5, observacion de comision).
+ruta_completitud <- guardar_grafico_seguro(p_completitud, "02_mapa_completitud.png", ancho = 17, alto = 8)
 
 completitud_muestras <- sensorial_individual %>%
   mutate(n_targets_disponibles = rowSums(!is.na(pick(all_of(target_cols))))) %>%
@@ -438,13 +449,20 @@ correlaciones_targets_altas <- cor_targets_largo %>%
 
 p_cor_targets <- ggplot(cor_targets_largo, aes(x = target_1, y = target_2, fill = correlacion)) +
   geom_tile(color = "white") +
-  geom_text(aes(label = sprintf("%.2f", correlacion)), size = 2.3) +
+  geom_text(aes(label = sprintf("%.2f", correlacion)), size = 3.2) +
   scale_fill_gradient2(low = color_alerta, mid = "white", high = color_acento, midpoint = 0, limits = c(-1, 1), na.value = "grey90") +
   tema_eda +
-  theme(axis.text.y = element_text(size = 7)) +
+  theme(
+    axis.text.y = element_text(size = 11),
+    axis.text.x = element_text(size = 11, angle = 90, hjust = 1, vjust = 0.5),
+    plot.title = element_text(size = 15)
+  ) +
   labs(title = "Correlacion entre targets sensoriales (evaluaciones individuales)", x = NULL, y = NULL, fill = "r")
 
-ruta_correlacion_targets <- guardar_grafico_seguro(p_cor_targets, "05_correlacion_targets.png", ancho = 11, alto = 10)
+# Figura ampliada (18x16 in) para que las 33 etiquetas de targets sean
+# legibles a tamano impreso; se muestra a pagina completa en horizontal
+# en el documento (Figura 3.9, observacion de revision de comision).
+ruta_correlacion_targets <- guardar_grafico_seguro(p_cor_targets, "05_correlacion_targets.png", ancho = 18, alto = 16)
 
 # ------------------------------------------------------------
 # Perfil promedio por muestra y foco en targets de modelamiento (se mantienen del analisis anterior)

@@ -1,28 +1,30 @@
 # ============================================================
-# 16b_sensibilidad_outliers_quimicos.R
-# Sensibilidad de los modelos principales (M_pura: Ridge y Random Forest
-# restringido) a las unidades analiticas marcadas como atipicas en el EDA
-# quimico (T2/Q, script 10_analisis_quimico.R)
+# 16d_sensibilidad_muestras_comerciales.R
+# Sensibilidad del modelo principal (M_pura: Random Forest restringido y
+# Ridge) a la inclusion de las dos muestras comerciales importadas
+# (Dalwhinnie y Caol Ila) frente al resto de muestras experimentales
+# chilenas.
 # Tesis whisky chileno - modelamiento quimico-sensorial
 # ============================================================
 
-# Pregunta que responde este script: si se excluyen del bootstrap las
-# unidades analiticas de M_pura que 10_analisis_quimico.R ya marco como
-# atipicas por T2 de Hotelling o Q-residual (combinacion de variables
-# quimicas fuera de lo esperado para su grupo analitico), ?cambia
-# sustancialmente el desempeno de los modelos principales (Ridge, el mejor
-# por MAE bootstrap, y Random Forest restringido, el de mejor R2/Spearman;
-# ver validacion_bootstrap_cv.xlsx)? Si no cambia, es evidencia de que la
-# conclusion principal de la tesis es robusta a esas unidades puntuales.
-# Si cambia, es un hallazgo metodologico que vale la pena discutir.
+# Pregunta que responde este script: la Figura 3.8 (PCA sensorial, cata
+# social de enero) muestra que la primera componente separa con claridad
+# las dos muestras comerciales (Dalwhinnie, Caol Ila) de las experimentales
+# a lo largo de un eje fenolico/medicinal/ahumado. Si esas dos muestras
+# concentran el extremo alto del rango de y_fenolico_comun, el modelo
+# principal podria estar aprendiendo a distinguir "es una muestra comercial
+# importada" en vez de una relacion quimica generalizable dentro del whisky
+# chileno. Este script reajusta el modelo excluyendo las dos muestras
+# comerciales y reporta MAE, R2 y variables prioritarias solo sobre las
+# muestras experimentales, para verificar si la senal sobrevive.
 #
 # Mismo procedimiento de bootstrap agrupado que 16_validacion_bootstrap_cv.R
-# (100 iteraciones, remuestreo con reemplazo por identificador_quimico, mismos
-# hiperparametros de ranger/glmnet), aplicado en paralelo a dos versiones de
-# M_pura: "completo" (34 unidades, matriz pura sin cata individual JU) y
-# "sin_outliers_eda" (excluyendo ademas las marcadas por T2/Q). No se
-# modifica ni se sobrescribe M_pura en ningun archivo: la exclusion es solo
-# interna a este script de sensibilidad.
+# (100 iteraciones, remuestreo con reemplazo por identificador_quimico,
+# mismos hiperparametros de ranger/glmnet), aplicado en paralelo a dos
+# versiones de M_pura: "completo" (10 muestras independientes, incluye las
+# 2 comerciales) y "sin_comerciales" (8 muestras, solo experimentales). No
+# se modifica ni se sobrescribe M_pura en ningun archivo: la exclusion es
+# solo interna a este script de sensibilidad.
 
 # ------------------------------------------------------------
 # 1. Configuracion
@@ -61,22 +63,17 @@ set.seed(123)
 dir_modelamiento <- file.path(dir_data, "modelamiento")
 dir_outputs <- file.path(dir_proyecto, "outputs")
 dir_outputs_modelamiento <- file.path(dir_outputs, "modelamiento")
-dir_outputs_sensibilidad <- file.path(dir_outputs_modelamiento, "sensibilidad_outliers")
+dir_outputs_sensibilidad <- file.path(dir_outputs_modelamiento, "sensibilidad_comerciales")
 
 dir.create(dir_modelamiento, recursive = TRUE, showWarnings = FALSE)
 dir.create(dir_outputs_sensibilidad, recursive = TRUE, showWarnings = FALSE)
 
 ruta_datos_modelamiento <- file.path(dir_modelamiento, "datos_modelamiento.xlsx")
-ruta_analisis_quimico <- file.path(dir_procesamiento, "analisis_quimico.xlsx")
-ruta_salida_excel <- file.path(dir_modelamiento, "sensibilidad_outliers_quimicos.xlsx")
+ruta_salida_excel <- file.path(dir_modelamiento, "sensibilidad_muestras_comerciales.xlsx")
 
 if (!file.exists(ruta_datos_modelamiento)) {
   stop("No existe el archivo requerido: ", ruta_datos_modelamiento,
        "\nEjecuta primero scripts/R/modelamiento/12_preparar_datos_modelamiento.R")
-}
-if (!file.exists(ruta_analisis_quimico)) {
-  stop("No existe el archivo requerido: ", ruta_analisis_quimico,
-       "\nEjecuta primero scripts/R/exploratorio/10_analisis_quimico.R")
 }
 
 # Mismos parametros que 16_validacion_bootstrap_cv.R, para que la
@@ -91,9 +88,10 @@ limite_superior_target <- 5
 n_arboles_rf <- 300
 max_depth_rf <- 3
 
-targets_a_evaluar <- c("y_fenolico_comun", "y_frutal_comun")
-modelos_a_evaluar <- c("ridge", "random_forest_restringido")
+target_a_evaluar <- "y_fenolico_comun"
+modelos_a_evaluar <- c("random_forest_restringido", "ridge")
 escenario_id <- "M_pura"
+muestras_comerciales <- c("C1 / Dalwhinnie", "C2 / Caol Ila")
 
 # ------------------------------------------------------------
 # 2. Funciones auxiliares (replicadas de 16_validacion_bootstrap_cv.R para
@@ -134,8 +132,6 @@ calcular_metricas_vec <- function(y_obs, y_pred, y_train = NULL) {
     return(data.frame(mae = NA_real_, rmse = NA_real_, r2 = NA_real_, sse = NA_real_, sst = NA_real_, spearman = NA_real_, bias = NA_real_))
   }
 
-  # Referencia de R2 = media del pliegue de entrenamiento de esa iteracion,
-  # no del propio pliegue de prueba (ver 16_validacion_bootstrap_cv.R).
   referencia <- if (!is.null(y_train) && length(stats::na.omit(as.numeric(y_train))) > 0) {
     mean(as.numeric(y_train), na.rm = TRUE)
   } else {
@@ -274,7 +270,7 @@ crear_split_bootstrap_agrupado <- function(df) {
 ajustar_rf_boot <- function(datos, iteracion) {
   n_train <- length(datos$y_train)
   p <- length(datos$predictores)
-  if (n_train < 8 || p < 1) return(NULL)
+  if (n_train < 8 || p < 1) return(list(pred = NULL, importancia = data.frame()))
 
   df_train <- as.data.frame(datos$train[, datos$predictores, drop = FALSE])
   df_test <- as.data.frame(datos$test[, datos$predictores, drop = FALSE])
@@ -289,20 +285,30 @@ ajustar_rf_boot <- function(datos, iteracion) {
       formula = stats::as.formula(paste(bt(target_tmp), "~", paste(bt(datos$predictores), collapse = " + "))),
       data = df_train, num.trees = n_arboles_rf, mtry = mtry_val,
       min.node.size = min_node, max.depth = max_depth_rf,
-      respect.unordered.factors = "order", seed = 123 + iteracion
+      respect.unordered.factors = "order", seed = 123 + iteracion,
+      importance = "permutation"
     )
   }, error = function(e) NULL)
 
-  if (is.null(fit)) return(NULL)
+  if (is.null(fit)) return(list(pred = NULL, importancia = data.frame()))
 
   pred <- tryCatch(stats::predict(fit, data = df_test)$predictions, error = function(e) rep(mean(datos$y_train), nrow(df_test)))
-  recortar_prediccion(pred)
+
+  imp <- tryCatch(ranger::importance(fit), error = function(e) NULL)
+  importancia <- if (!is.null(imp)) {
+    data.frame(predictor = names(imp), importancia_abs = as.numeric(imp), stringsAsFactors = FALSE) %>%
+      filter(!is.na(importancia_abs), importancia_abs > 0)
+  } else {
+    data.frame()
+  }
+
+  list(pred = recortar_prediccion(pred), importancia = importancia)
 }
 
 ajustar_ridge_boot <- function(datos, escenario, target, iteracion) {
   n_train <- length(datos$y_train)
   p <- length(datos$predictores)
-  if (n_train < 6 || p < 1) return(NULL)
+  if (n_train < 6 || p < 1) return(list(pred = NULL, importancia = data.frame()))
 
   nfolds_inner <- min(5, max(3, floor(n_train / 2)))
 
@@ -317,18 +323,29 @@ ajustar_ridge_boot <- function(datos, escenario, target, iteracion) {
     )
   }, error = function(e) NULL)
 
-  if (is.null(fit)) return(NULL)
+  if (is.null(fit)) return(list(pred = NULL, importancia = data.frame()))
 
   pred <- tryCatch(
     as.numeric(stats::predict(fit, newx = datos$x_test, s = "lambda.min")),
     error = function(e) rep(mean(datos$y_train), nrow(datos$x_test))
   )
-  recortar_prediccion(pred)
+
+  coefs <- tryCatch(as.matrix(stats::coef(fit, s = "lambda.min")), error = function(e) NULL)
+  importancia <- if (!is.null(coefs)) {
+    data.frame(predictor = rownames(coefs), importancia_abs = abs(as.numeric(coefs[, 1])), stringsAsFactors = FALSE) %>%
+      filter(predictor != "(Intercept)", !is.na(importancia_abs), importancia_abs > 0)
+  } else {
+    data.frame()
+  }
+
+  list(pred = recortar_prediccion(pred), importancia = importancia)
 }
 
 ejecutar_bootstrap_modelo <- function(df_base, target, version, modelo) {
   resultados <- list()
+  importancias <- list()
   k <- 1
+  ki <- 1
   max_pred <- if (modelo == "random_forest_restringido") max_predictores_arboles else max_predictores_supervisados
 
   # Misma semilla base que 16_validacion_bootstrap_cv.R para el escenario
@@ -348,14 +365,14 @@ ejecutar_bootstrap_modelo <- function(df_base, target, version, modelo) {
     datos <- preparar_matrices_x(train_b, test_b, target, predictores)
     if (is.null(datos)) next
 
-    pred <- if (modelo == "random_forest_restringido") {
+    ajuste <- if (modelo == "random_forest_restringido") {
       ajustar_rf_boot(datos, b)
     } else {
       ajustar_ridge_boot(datos, escenario_id, target, b)
     }
-    if (is.null(pred)) next
+    if (is.null(ajuste$pred)) next
 
-    met <- calcular_metricas_vec(test_b[[target]], pred, y_train = datos$y_train)
+    met <- calcular_metricas_vec(test_b[[target]], ajuste$pred, y_train = datos$y_train)
 
     resultados[[k]] <- data.frame(
       modelo = modelo, version = version, target = target, iteracion = b,
@@ -364,13 +381,19 @@ ejecutar_bootstrap_modelo <- function(df_base, target, version, modelo) {
       met, stringsAsFactors = FALSE
     )
     k <- k + 1
+
+    if (nrow(ajuste$importancia) > 0) {
+      importancias[[ki]] <- ajuste$importancia %>%
+        mutate(modelo = modelo, version = version, target = target, iteracion = b)
+      ki <- ki + 1
+    }
   }
 
-  bind_rows(resultados)
+  list(metricas = bind_rows(resultados), importancia = bind_rows(importancias))
 }
 
 # ------------------------------------------------------------
-# 3. Datos: M_pura completo vs. M_pura sin unidades marcadas por T2/Q
+# 3. Datos: M_pura completo vs. M_pura sin muestras comerciales
 # ------------------------------------------------------------
 
 matriz_pura <- readxl::read_excel(ruta_datos_modelamiento, sheet = "01_pura")
@@ -386,65 +409,60 @@ predictores_gcfid_todos <- grep("^x_gcfid_", names(matriz_pura), value = TRUE)
 predictores_no_gcfid <- setdiff(obtener_predictores_x(matriz_pura), predictores_gcfid_todos)
 matriz_pura <- matriz_pura %>% select(-all_of(predictores_no_gcfid))
 
-t2q_outliers <- readxl::read_excel(ruta_analisis_quimico, sheet = "13_t2q_outliers") %>%
-  filter(excede_t2 %in% TRUE | excede_q %in% TRUE) %>%
-  distinct(unidad_analitica_id)
-
-# t2q_outliers es la lista GLOBAL de unidades marcadas por T2/Q en todo
-# 10_analisis_quimico.R (incluye bloques que no forman parte de M_pura,
-# ej. JU). Lo que realmente importa aqui es cuantas de esas unidades
-# efectivamente estan dentro de M_pura -eso es lo que se excluye.
-unidades_excluidas_global <- t2q_outliers$unidad_analitica_id
-
 df_completo <- matriz_pura %>%
   mutate(across(all_of(obtener_predictores_x(matriz_pura)), convertir_numericamente))
 df_completo$grupo_validacion <- as.character(df_completo$identificador_quimico)
 
-unidades_excluidas <- intersect(df_completo$unidad_analitica_id, unidades_excluidas_global)
-df_sin_outliers <- df_completo %>% filter(!(unidad_analitica_id %in% unidades_excluidas))
+df_sin_comerciales <- df_completo %>% filter(!(identificador_quimico %in% muestras_comerciales))
 
-cat("\nSENSIBILIDAD A OUTLIERS QUIMICOS (M_pura, Ridge y Random Forest restringido)\n")
+cat("\nSENSIBILIDAD A MUESTRAS COMERCIALES (M_pura, Random Forest restringido y Ridge)\n")
 cat("Unidades totales en M_pura:", nrow(df_completo), "\n")
-cat("Unidades marcadas por T2/Q dentro de M_pura (excluidas en la version sin_outliers_eda):", length(unidades_excluidas), "\n")
-cat("Unidades tras exclusion:", nrow(df_sin_outliers), "\n")
+cat("Muestras independientes totales (identificador_quimico):", dplyr::n_distinct(df_completo$identificador_quimico), "\n")
+cat("Unidades correspondientes a muestras comerciales (Dalwhinnie, Caol Ila):", sum(df_completo$identificador_quimico %in% muestras_comerciales), "\n")
+cat("Unidades tras exclusion (solo experimentales):", nrow(df_sin_comerciales), "\n")
+cat("Muestras independientes tras exclusion:", dplyr::n_distinct(df_sin_comerciales$identificador_quimico), "\n")
 
 # ------------------------------------------------------------
-# 4. Bootstrap para cada target x version
+# 4. Bootstrap para cada version
 # ------------------------------------------------------------
 
 metricas_sensibilidad <- list()
+importancia_sensibilidad <- list()
 k <- 1
+ki <- 1
 
-for (target in targets_a_evaluar) {
-  if (!(target %in% names(df_completo))) next
+for (version in c("completo", "sin_comerciales")) {
+  df_version <- if (version == "completo") df_completo else df_sin_comerciales
+  df_modelo <- df_version %>% filter(!is.na(.data[[target_a_evaluar]]))
 
-  for (version in c("completo", "sin_outliers_eda")) {
-    df_version <- if (version == "completo") df_completo else df_sin_outliers
-    df_modelo <- df_version %>% filter(!is.na(.data[[target]]))
+  if (nrow(df_modelo) < min_n_target_modelable || dplyr::n_distinct(df_modelo$grupo_validacion) < 4) {
+    message("Omitido (n insuficiente): ", target_a_evaluar, " - ", version, " (n=", nrow(df_modelo), ")")
+    next
+  }
 
-    if (nrow(df_modelo) < min_n_target_modelable || dplyr::n_distinct(df_modelo$grupo_validacion) < 4) {
-      message("Omitido (n insuficiente): ", target, " - ", version, " (n=", nrow(df_modelo), ")")
-      next
+  for (modelo in modelos_a_evaluar) {
+    message("Bootstrap ", modelo, ": ", target_a_evaluar, " - ", version, " (n=", nrow(df_modelo), ", grupos=", dplyr::n_distinct(df_modelo$grupo_validacion), ")")
+    res <- ejecutar_bootstrap_modelo(df_modelo, target_a_evaluar, version, modelo)
+    if (nrow(res$metricas) > 0) {
+      metricas_sensibilidad[[k]] <- res$metricas
+      k <- k + 1
     }
-
-    for (modelo in modelos_a_evaluar) {
-      message("Bootstrap ", modelo, ": ", target, " - ", version, " (n=", nrow(df_modelo), ")")
-      res <- ejecutar_bootstrap_modelo(df_modelo, target, version, modelo)
-      if (nrow(res) > 0) {
-        metricas_sensibilidad[[k]] <- res
-        k <- k + 1
-      }
+    if (nrow(res$importancia) > 0) {
+      importancia_sensibilidad[[ki]] <- res$importancia
+      ki <- ki + 1
     }
   }
 }
 
 metricas_sensibilidad <- bind_rows(metricas_sensibilidad)
+importancia_sensibilidad <- bind_rows(importancia_sensibilidad)
 
 # ------------------------------------------------------------
-# 5. Resumen comparativo completo vs. sin_outliers_eda
+# 5. Resumen comparativo completo vs. sin_comerciales
 # ------------------------------------------------------------
 
 resumen_sensibilidad <- data.frame()
+comparacion_diferencias <- data.frame()
 if (nrow(metricas_sensibilidad) > 0) {
   resumen_sensibilidad <- metricas_sensibilidad %>%
     group_by(modelo, target, version) %>%
@@ -458,6 +476,7 @@ if (nrow(metricas_sensibilidad) > 0) {
       rmse_media = mean(rmse, na.rm = TRUE),
       r2_media = mean(r2, na.rm = TRUE),
       r2_agregado = 1 - sum(sse, na.rm = TRUE) / sum(sst, na.rm = TRUE),
+      r2_pct_positivo = round(100 * mean(r2 > 0, na.rm = TRUE), 1),
       spearman_media = mean(spearman, na.rm = TRUE),
       bias_media = mean(bias, na.rm = TRUE),
       .groups = "drop"
@@ -465,58 +484,87 @@ if (nrow(metricas_sensibilidad) > 0) {
     arrange(modelo, target, version)
 
   comparacion_diferencias <- resumen_sensibilidad %>%
-    select(modelo, target, version, mae_media, rmse_media, r2_media, spearman_media) %>%
-    pivot_wider(names_from = version, values_from = c(mae_media, rmse_media, r2_media, spearman_media)) %>%
+    select(modelo, target, version, mae_media, r2_agregado) %>%
+    pivot_wider(names_from = version, values_from = c(mae_media, r2_agregado)) %>%
     mutate(
-      diferencia_mae = mae_media_sin_outliers_eda - mae_media_completo,
+      diferencia_mae = mae_media_sin_comerciales - mae_media_completo,
       diferencia_mae_pct = round(100 * diferencia_mae / mae_media_completo, 1),
-      diferencia_r2 = r2_media_sin_outliers_eda - r2_media_completo,
+      diferencia_r2_agregado = r2_agregado_sin_comerciales - r2_agregado_completo,
       lectura = case_when(
-        is.na(diferencia_mae_pct) ~ "no_comparable",
-        abs(diferencia_mae_pct) <= 10 ~ "robusto: el MAE cambia menos de 10% al excluir los outliers del EDA",
-        abs(diferencia_mae_pct) <= 25 ~ "sensibilidad moderada: revisar si las unidades excluidas concentran senal real o ruido",
-        TRUE ~ "sensibilidad alta: el resultado depende fuertemente de las unidades marcadas por el EDA"
+        is.na(r2_agregado_sin_comerciales) ~ "no_comparable",
+        r2_agregado_sin_comerciales > 0 ~ "senal_sobrevive: R2 agregado se mantiene positivo sin las muestras comerciales",
+        TRUE ~ "senal_no_sobrevive: R2 agregado deja de ser positivo sin las muestras comerciales"
       )
     )
-} else {
-  comparacion_diferencias <- data.frame()
 }
 
 # ------------------------------------------------------------
-# 6. Grafico comparativo
+# 6. Variables prioritarias por version (solo Random Forest)
+# ------------------------------------------------------------
+
+variables_por_version <- data.frame()
+if (nrow(importancia_sensibilidad) > 0) {
+  n_iter_por_version <- metricas_sensibilidad %>%
+    filter(modelo == "random_forest_restringido") %>%
+    group_by(version) %>%
+    summarise(n_iteraciones = dplyr::n_distinct(iteracion), .groups = "drop")
+
+  variables_por_version <- importancia_sensibilidad %>%
+    filter(modelo == "random_forest_restringido") %>%
+    group_by(version, predictor) %>%
+    summarise(
+      n_apariciones = n(),
+      importancia_abs_media = mean(importancia_abs, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    left_join(n_iter_por_version, by = "version") %>%
+    mutate(frecuencia_seleccion = round(n_apariciones / n_iteraciones, 3)) %>%
+    group_by(version) %>%
+    arrange(desc(importancia_abs_media), .by_group = TRUE) %>%
+    mutate(ranking = row_number()) %>%
+    ungroup() %>%
+    filter(ranking <= 10) %>%
+    arrange(version, ranking)
+}
+
+# ------------------------------------------------------------
+# 7. Grafico comparativo
 # ------------------------------------------------------------
 
 ruta_grafico <- NA_character_
 if (nrow(metricas_sensibilidad) > 0) {
   p_comparacion <- ggplot(metricas_sensibilidad, aes(x = version, y = mae, fill = version)) +
     geom_boxplot(alpha = 0.6, outlier.alpha = 0.4) +
-    facet_grid(modelo ~ target) +
+    facet_wrap(~modelo) +
     labs(
-      title = "Sensibilidad del MAE bootstrap a outliers quimicos del EDA",
-      subtitle = "Ridge y Random Forest restringido, M_pura, 100 iteraciones de bootstrap agrupado",
+      title = "Sensibilidad del MAE bootstrap a las muestras comerciales",
+      subtitle = "Random Forest restringido y Ridge, M_pura, y_fenolico_comun, 100 iteraciones de bootstrap agrupado",
       x = NULL, y = "MAE (test bootstrap)", fill = NULL
     ) +
     theme_minimal(base_size = 11) +
     theme(legend.position = "bottom")
 
-  ruta_grafico <- file.path(dir_outputs_sensibilidad, "01_comparacion_mae_completo_vs_sin_outliers.png")
-  ggsave(ruta_grafico, p_comparacion, width = 9, height = 8, dpi = 300)
+  ruta_grafico <- file.path(dir_outputs_sensibilidad, "01_comparacion_mae_completo_vs_sin_comerciales.png")
+  ggsave(ruta_grafico, p_comparacion, width = 8, height = 6, dpi = 300)
 }
 
 # ------------------------------------------------------------
-# 7. Exportacion
+# 8. Exportacion
 # ------------------------------------------------------------
 
 resumen_general <- data.frame(
   indicador = c(
-    "escenario", "modelo_evaluado", "n_bootstrap_por_version",
-    "n_unidades_completo", "n_unidades_marcadas_eda", "n_unidades_sin_outliers_eda",
-    "targets_evaluados", "archivo_salida"
+    "escenario", "target", "modelos_evaluados", "n_bootstrap_por_version",
+    "n_unidades_completo", "n_muestras_independientes_completo",
+    "n_unidades_comerciales", "n_unidades_sin_comerciales",
+    "n_muestras_independientes_sin_comerciales", "archivo_salida"
   ),
   valor = c(
-    escenario_id, paste(modelos_a_evaluar, collapse = "; "), as.character(n_bootstrap),
-    as.character(nrow(df_completo)), as.character(length(unidades_excluidas)),
-    as.character(nrow(df_sin_outliers)), paste(targets_a_evaluar, collapse = "; "),
+    escenario_id, target_a_evaluar, paste(modelos_a_evaluar, collapse = "; "), as.character(n_bootstrap),
+    as.character(nrow(df_completo)), as.character(dplyr::n_distinct(df_completo$identificador_quimico)),
+    as.character(sum(df_completo$identificador_quimico %in% muestras_comerciales)),
+    as.character(nrow(df_sin_comerciales)),
+    as.character(dplyr::n_distinct(df_sin_comerciales$identificador_quimico)),
     ruta_salida_excel
   ),
   stringsAsFactors = FALSE
@@ -524,16 +572,16 @@ resumen_general <- data.frame(
 
 notas <- data.frame(
   punto = c(
-    "Que compara", "Que es 'completo'", "Que es 'sin_outliers_eda'",
+    "Que compara", "Que es 'completo'", "Que es 'sin_comerciales'",
     "Metodologia", "Interpretacion", "Limite"
   ),
   descripcion = c(
-    "Los mismos modelos (Ridge, el de mejor MAE bootstrap en M_pura, y Random Forest restringido, el de mejor R2/Spearman) y el mismo procedimiento de validacion (bootstrap agrupado por identificador_quimico, 100 iteraciones), cada uno ajustado dos veces: con todas las unidades de M_pura y excluyendo las marcadas por T2/Q en el EDA quimico (script 10).",
-    paste0("M_pura completo: ", nrow(df_completo), " unidades analiticas."),
-    paste0("M_pura excluyendo unidades con T2 de Hotelling o Q-residual por encima del limite del 95% (script 10_analisis_quimico.R, hoja 13_t2q_outliers): ", nrow(df_sin_outliers), " unidades."),
-    "Hiperparametros y logica de bootstrap identicos a 16_validacion_bootstrap_cv.R para que la comparacion sea metodologicamente equivalente.",
-    "Si el MAE medio cambia poco entre versiones, los resultados principales de la tesis no dependen criticamente de esas unidades puntuales. Si cambia mucho, es evidencia de que esas unidades tienen peso desproporcionado y merece discutirse en la tesis.",
-    "No se elimina ninguna unidad de los archivos de datos ni de otros scripts; la exclusion es interna y exclusiva de este analisis de sensibilidad."
+    "Random Forest restringido y Ridge, con el mismo procedimiento de validacion (bootstrap agrupado por identificador_quimico, 100 iteraciones), cada uno ajustado dos veces sobre M_pura y_fenolico_comun: con las 10 muestras independientes (8 experimentales chilenas + 2 comerciales importadas) y excluyendo las 2 comerciales.",
+    paste0("M_pura completo: ", nrow(df_completo), " unidades analiticas, ", dplyr::n_distinct(df_completo$identificador_quimico), " muestras independientes."),
+    paste0("M_pura excluyendo Dalwhinnie y Caol Ila (identificador_quimico): ", nrow(df_sin_comerciales), " unidades analiticas, ", dplyr::n_distinct(df_sin_comerciales$identificador_quimico), " muestras independientes."),
+    "Hiperparametros y logica de bootstrap identicos a 16_validacion_bootstrap_cv.R para que la comparacion sea metodologicamente equivalente. R2 calculado de forma agregada (SSE y SST sumados sobre todas las predicciones fuera de bolsa, referencia = media del pliegue de entrenamiento de cada iteracion), no promediando el R2 de cada iteracion.",
+    "Si el R2 agregado se mantiene positivo al excluir las muestras comerciales, la senal detectada no depende de que el modelo distinga muestras importadas de muestras chilenas, y es evidencia mas fuerte de una relacion quimico-sensorial real dentro del whisky chileno. Si el R2 agregado deja de ser positivo, la senal original dependia en buena parte de esas dos muestras.",
+    "Con solo 8 muestras independientes tras la exclusion, la incertidumbre de esta version es mayor que la del escenario completo. No se elimina ninguna unidad de los archivos de datos ni de otros scripts, la exclusion es interna y exclusiva de este analisis de sensibilidad."
   ),
   stringsAsFactors = FALSE
 )
@@ -543,7 +591,8 @@ lista_hojas <- list(
   "01_metricas_bootstrap" = metricas_sensibilidad,
   "02_resumen_comparativo" = resumen_sensibilidad,
   "03_comparacion_diferencias" = comparacion_diferencias,
-  "04_notas" = notas
+  "04_variables_prioritarias" = variables_por_version,
+  "05_notas" = notas
 )
 lista_hojas <- lista_hojas[vapply(lista_hojas, function(x) is.data.frame(x) && nrow(x) > 0, logical(1))]
 
@@ -554,5 +603,9 @@ cat("Archivo generado:\n", ruta_salida_excel, "\n")
 if (!is.na(ruta_grafico)) cat("Grafico generado:\n", ruta_grafico, "\n")
 cat("\nResumen comparativo:\n")
 print(resumen_sensibilidad)
-cat("\nDiferencias completo vs. sin_outliers_eda:\n")
-print(comparacion_diferencias %>% select(modelo, target, diferencia_mae, diferencia_mae_pct, diferencia_r2, lectura))
+cat("\nDiferencias completo vs. sin_comerciales:\n")
+if (nrow(comparacion_diferencias) > 0) {
+  print(comparacion_diferencias %>% select(modelo, target, diferencia_mae, diferencia_mae_pct, diferencia_r2_agregado, lectura))
+}
+cat("\nVariables prioritarias (Random Forest) por version:\n")
+print(variables_por_version)

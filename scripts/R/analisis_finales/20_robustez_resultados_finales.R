@@ -137,19 +137,41 @@ diferencia_mae_pct_fenolico <- sensibilidad_diferencias %>%
 gl_frutal <- viabilidad_principal %>% filter(target == target_secundario) %>% pull(grados_libertad_aprox)
 gl_frutal <- if (length(gl_frutal) > 0) gl_frutal[1] else NA_integer_
 
+# A partir de la correccion de la variable de agrupacion del bootstrap
+# (unidad_analitica_id -> identificador_quimico, que cierra la fuga de
+# informacion entre replicas/tecnicas de una misma muestra quimica) y de la
+# correccion del calculo de R2 (agregado sobre SSE/SST y no promedio de R2
+# por iteracion), r2_principal es positivo para el mejor modelo candidato,
+# aunque un analisis de sensibilidad adicional (16d) muestra que depende en
+# parte del contraste entre muestras comerciales y experimentales. La tabla
+# de conclusiones defendibles se redacta en consecuencia.
+resultado_supera_base <- isTRUE(r2_principal > 0)
+
 conclusiones_defendibles <- data.frame(
   afirmacion = c(
-    paste0(modelo_principal, " sobre ", target_principal, " en ", escenario_principal, " es el resultado predictivo principal de la tesis."),
-    paste0("El resultado principal (", target_principal, ") es robusto a las unidades quimicamente atipicas detectadas en el EDA."),
-    paste0("Las unidades marcadas como atipicas en el EDA no predicen sistematicamente peor con el modelo principal."),
+    if (resultado_supera_base) {
+      paste0(modelo_principal, " sobre ", target_principal, " en ", escenario_principal, " es el resultado predictivo principal de la tesis, con una senal moderada y condicionada por el contraste comercial-experimental de la matriz (ver analisis de sensibilidad de muestras comerciales).")
+    } else {
+      paste0(
+        "Bajo validacion agrupada por identificador_quimico (sin fuga de informacion entre replicas ni tecnicas de una misma muestra quimica), ",
+        "ningun modelo candidato en ", escenario_principal, " para ", target_principal, " supera de forma robusta la linea base de la media de entrenamiento. ",
+        modelo_principal, " es el modelo con menor MAE bootstrap entre los candidatos, pero su R2 bootstrap es negativo."
+      )
+    },
+    paste0("El desempeno de ", modelo_principal, " sobre ", target_principal, " se mantiene en un rango similar al excluir las unidades quimicamente atipicas detectadas en el EDA, es decir, el resultado no se explica unicamente por esas unidades."),
+    paste0("Las unidades marcadas como atipicas en el EDA no predicen sistematicamente peor con ", modelo_principal, "."),
     paste0(target_secundario, " debe mantenerse como target secundario/exploratorio, no como resultado central."),
-    "Las variables quimicas prioritarias son coherentes con la literatura de compuestos fenolicos volatiles.",
+    if (resultado_supera_base) {
+      "Las variables quimicas prioritarias son coherentes con la literatura de compuestos fenolicos volatiles."
+    } else {
+      "Las variables quimicas con mayor consenso dentro del modelo ajustado son coherentes con la literatura de compuestos fenolicos volatiles, pero al no superar el modelo la linea base bajo validacion sin fuga, esta coherencia debe leerse como una senal exploratoria y no como evidencia de una relacion predictiva validada."
+    },
     "El VIF global no es aplicable; se uso correlacion pareada y VIF por bloque como alternativa metodologica."
   ),
   evidencia = c(
     paste0(
       "MAE bootstrap = ", round(mae_principal, 3), "; R2 bootstrap = ", round(r2_principal, 3),
-      "; Spearman bootstrap = ", round(spearman_principal, 3), " (n=100 iteraciones bootstrap agrupado)."
+      "; Spearman bootstrap = ", round(spearman_principal, 3), " (n=100 iteraciones bootstrap agrupado por identificador_quimico, 10 grupos)."
     ),
     paste0(
       "MAE bootstrap completo = ", round(sens_fenolico_completo$mae_media[1], 3),
@@ -185,7 +207,11 @@ conclusiones_defendibles <- data.frame(
     "18_interpretabilidad_modelos.R (05_variables_finales_tesis)",
     "13b_colinealidad_modelamiento.R"
   ),
-  fortaleza = c("fuerte", "fuerte", "moderada", "fuerte", "moderada", "fuerte"),
+  fortaleza = if (resultado_supera_base) {
+    c("fuerte", "fuerte", "moderada", "fuerte", "moderada", "fuerte")
+  } else {
+    c("fuerte", "moderada", "moderada", "fuerte", "exploratoria", "fuerte")
+  },
   stringsAsFactors = FALSE
 )
 

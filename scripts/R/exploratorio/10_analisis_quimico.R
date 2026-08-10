@@ -533,17 +533,27 @@ completitud_bloque_variable <- quimica_wide %>%
   pivot_longer(cols = -bloque_id, names_to = "variable_quimica", values_to = "pct_completo")
 
 p_completitud <- ggplot(completitud_bloque_variable, aes(x = variable_quimica, y = bloque_id, fill = pct_completo)) +
-  geom_tile(color = "white") +
+  geom_tile(color = "white", linewidth = 0.7) +
   scale_fill_gradient(low = "#F4CCCC", high = color_acento, limits = c(0, 1), labels = scales::percent) +
   tema_eda +
-  theme(axis.text.y = element_text(size = 7)) +
+  theme(
+    axis.text.x = element_text(size = 10, angle = 90, hjust = 1, vjust = 0.5),
+    axis.text.y = element_text(size = 11),
+    plot.title = element_text(size = 14),
+    plot.subtitle = element_text(size = 11, color = "grey35"),
+    legend.title = element_text(size = 11),
+    legend.text = element_text(size = 10)
+  ) +
   labs(
     title = "Mapa de calor de completitud de variables quimicas por bloque analitico",
     subtitle = "Los vacios son estructurales: cada tecnica mide variables distintas, no errores de captura.",
     x = NULL, y = NULL, fill = "% completo"
   )
 
-ruta_completitud <- guardar_grafico_seguro(p_completitud, "02_mapa_completitud.png", ancho = 12, alto = 6)
+# Imagen ampliada (18x9 in) para que las 39 etiquetas de variables sean
+# legibles a tamano impreso, manteniendo la paleta y el estilo original
+# (rediseno de tamano/tipografia, Figura 3.2, observacion de comision).
+ruta_completitud <- guardar_grafico_seguro(p_completitud, "02_mapa_completitud.png", ancho = 18, alto = 9)
 
 # ------------------------------------------------------------
 # ETAPA 4: Deteccion de valores atipicos (outliers) - solo se documentan
