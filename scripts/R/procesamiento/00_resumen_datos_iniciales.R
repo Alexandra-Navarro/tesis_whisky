@@ -25,7 +25,13 @@ library(janitor)
 library(writexl)
 
 # Ruta del proyecto
-dir_proyecto <- "C:/Users/alena/OneDrive - usach.cl/Escritorio/tesis_repo/Modelamiento" # nolint
+# Por defecto se usa la raiz desde la que se ejecuta R (abrir Modelamiento.Rproj
+# o fijar el working directory en la carpeta Modelamiento). Solo si ese directorio
+# no corresponde al proyecto se usa la ruta de respaldo del equipo original.
+dir_proyecto <- normalizePath(getwd(), winslash = "/", mustWork = FALSE)
+if (!dir.exists(file.path(dir_proyecto, "data"))) {
+  dir_proyecto <- "C:/Users/alena/OneDrive - usach.cl/Escritorio/tesis_repo/Modelamiento" # nolint
+}
 
 #Rutas separadas para cada procedimiento
 dir_data <- file.path(dir_proyecto, "data")
