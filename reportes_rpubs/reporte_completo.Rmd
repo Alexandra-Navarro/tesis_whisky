@@ -874,6 +874,92 @@ incluir_figuras("../outputs/modelamiento/sensibilidad_imputacion_gcms", "\\.png$
 
 Para **Random Forest restringido** (el modelo principal), el MAE bootstrap cambia menos de un 2% al quitar por completo las variables GC-MS, tanto en `y_fenolico_comun` como en `y_frutal_comun`: el resultado del modelo principal es robusto a la imputación de GC-MS. Para **Ridge**, el MAE de `y_fenolico_comun` sí cambia de forma moderada (variación de un 11.9%, mejorando al excluir GC-MS), lo que indica que Ridge apoya una parte de su ajuste en la señal de esas variables mayormente imputadas. En conjunto, esto confirma que la conclusión principal de la tesis (Random Forest restringido, fenoles volátiles GC-FID como variables más consistentes) no depende de los datos GC-MS imputados, pero recomienda tratar con cautela cualquier lectura de las variables GC-MS específicamente cuando aparecen en modelos lineales como Ridge, dado su nivel de cobertura real (23.5%).
 
+## Sensibilidad a las muestras comerciales
+
+De las 10 muestras independientes de `M_pura`, 2 son whiskies comerciales importados (Dalwhinnie y Caol Ila) y 8 son experimentales chilenas. Esas dos muestras ocupan la parte alta del rango del target: Caol Ila es, con diferencia, la de mayor carácter fenólico percibido (3.38 de promedio) y Dalwhinnie queda entre las más altas (2.57), frente a un rango de 1.80 a 2.60 en las ocho restantes. Para saber si el modelo está capturando una relación química-sensorial dentro del whisky chileno o si se apoya en el contraste entre muestras importadas y experimentales, se repitió el bootstrap agrupado (100 iteraciones, Random Forest restringido y Ridge) excluyendo esas 2 muestras: 24 unidades analíticas y 8 muestras independientes.
+
+```{r sensibilidad-comerciales-resumen}
+kable(read_excel("../data/modelamiento/sensibilidad_muestras_comerciales.xlsx", sheet = "02_resumen_comparativo"), digits = 3)
+```
+
+```{r sensibilidad-comerciales-diferencias}
+kable(read_excel("../data/modelamiento/sensibilidad_muestras_comerciales.xlsx", sheet = "03_comparacion_diferencias"), digits = 3)
+```
+
+```{r sensibilidad-comerciales-fig, results='asis'}
+incluir_figuras("../outputs/modelamiento/sensibilidad_comerciales", "\\.png$")
+```
+
+Este es el análisis de sensibilidad más exigente de los cinco y el resultado es negativo: **la señal no sobrevive**. En Random Forest restringido el MAE incluso baja (de 0.396 a 0.235, un 40.6% menos), pero el R² agregado pasa de 0.247 a **-0.147**, y el porcentaje de iteraciones con R² positivo cae de 68% a 33%. Ridge se comporta igual o peor (R² agregado de -0.140 a -8.47).
+
+Conviene leer las dos métricas juntas, porque apuntan en direcciones opuestas por una razón entendible: al quitar las dos muestras más ahumadas, el target se vuelve mucho más homogéneo, así que los errores absolutos se achican (baja el MAE) pero también se achica la varianza que había que explicar. El R² se mide contra la media del pliegue de entrenamiento, y con un rango estrecho el modelo deja de superar a esa media. Dicho de otro modo: dentro de las 8 muestras chilenas, el modelo **no predice mejor que decir "el promedio"**.
+
+La conclusión honesta es que buena parte de la capacidad predictiva de `M_pura` descansa en el contraste entre las muestras comerciales ahumadas y las experimentales. Las variables identificadas como prioritarias (fenoles volátiles por GC-FID) siguen siendo químicamente coherentes con lo que distingue a esas muestras, pero este resultado impide afirmar que el modelo capture una relación química-sensorial fina dentro del whisky chileno. Con 8 muestras independientes la incertidumbre de esta versión es además mayor que la del escenario completo, así que tampoco se puede concluir lo contrario con seguridad: lo que corresponde es declarar el límite.
+
+## Sensibilidad a la imputación de variables GC-FID
+
+El análisis anterior sobre GC-MS se complementa con el caso inverso: 8 de las 34 unidades de `M_pura` no tienen GC-FID real y reciben todos sus predictores GC-FID por imputación de mediana. Para comprobar que los resultados no se apoyan en esas filas completamente imputadas, se repitió el mismo bootstrap excluyéndolas: 26 unidades analíticas y 6 muestras independientes.
+
+```{r sensibilidad-gcfid-resumen}
+kable(read_excel("../data/modelamiento/sensibilidad_imputacion_gcfid.xlsx", sheet = "02_resumen_comparativo"), digits = 3)
+```
+
+```{r sensibilidad-gcfid-diferencias}
+kable(read_excel("../data/modelamiento/sensibilidad_imputacion_gcfid.xlsx", sheet = "03_comparacion_diferencias"), digits = 3)
+```
+
+```{r sensibilidad-gcfid-fig, results='asis'}
+incluir_figuras("../outputs/modelamiento/sensibilidad_imputacion_gcfid", "\\.png$")
+```
+
+Aquí **la señal sí sobrevive**. En Random Forest restringido el MAE baja un 3.4% (0.396 a 0.382) y el R² agregado se mantiene positivo y prácticamente igual (0.247 a 0.221). Ridge incluso mejora de forma apreciable (MAE -14.8%, y su R² agregado pasa de -0.140 a 0.198). Es decir, las filas sin GC-FID real no estaban sosteniendo artificialmente el desempeño; si acaso, lo estaban diluyendo.
+
+Un detalle metodológico que conviene no pasar por alto: al quedar solo 6 muestras independientes, el número de iteraciones que debieron recurrir a la partición de respaldo 75/25 sube de 2 a 24 de 100. La comparación sigue siendo válida, pero esa versión se apoya en un remuestreo menos rico que la completa, lo que explica su mayor dispersión (percentil 95 del MAE de 0.894 en Random Forest, frente a 0.672 en la versión completa).
+
+## Sensibilidad a la escala del bloque de septiembre
+
+Las fichas de cata de septiembre de 2024 usaron una escala 1-5, mientras que el resto de los bloques usó 0-5. Como esas 9 unidades entran a `M_pura` junto con las demás, cabe preguntarse si el piso distinto introduce un artefacto. Para medirlo se reescalaron linealmente solo esas 9 filas, con `(y - 1) * 5 / 4`, y se repitió el bootstrap sobre las mismas 34 unidades.
+
+Antes de cualquier modelo, B1, C70 y H76 son las únicas muestras evaluadas en los dos bloques, lo que permite comparar directamente el mismo whisky bajo ambas escalas:
+
+```{r sensibilidad-escala-pareada}
+kable(read_excel("../data/modelamiento/sensibilidad_escala_septiembre.xlsx", sheet = "01_comparacion_pareada"), digits = 3)
+```
+
+```{r sensibilidad-escala-resumen}
+kable(read_excel("../data/modelamiento/sensibilidad_escala_septiembre.xlsx", sheet = "03_resumen_comparativo"), digits = 3)
+```
+
+```{r sensibilidad-escala-diferencias}
+kable(read_excel("../data/modelamiento/sensibilidad_escala_septiembre.xlsx", sheet = "04_comparacion_diferencias"), digits = 3)
+```
+
+```{r sensibilidad-escala-fig, results='asis'}
+incluir_figuras("../outputs/modelamiento/sensibilidad_escala_septiembre", "\\.png$")
+```
+
+La comparación pareada muestra diferencias pequeñas y no sistemáticas entre los dos bloques (B1 prácticamente idéntico, 2.111 contra 2.110; C70 y H76 algo más altos en septiembre, 0.20 y 0.47 puntos), lo que ya sugiere que el efecto de escala no domina la señal.
+
+En el modelamiento, el reescalado **no cambia la conclusión**. Random Forest restringido sube su MAE un 10.2% (0.396 a 0.436) pero mejora su R² agregado (0.247 a 0.374) y su porcentaje de iteraciones positivas (68% a 88%), mientras que en Ridge el R² agregado se mantiene prácticamente igual (-0.140 a -0.127). Ninguna de las dos versiones cambia de signo ni de orden de magnitud, así que el desempeño del modelo principal no es un artefacto del piso de escala del bloque de septiembre.
+
+Dos advertencias sobre este análisis. La transformación supone que el desplazamiento de escala es puramente lineal y afecta igual a los cinco descriptores de origen, y no corrige un eventual sesgo propio del panel de ese bloque, solo el artefacto de escala declarado. Y el hecho de que el reescalado *mejore* el R² no es razón para adoptarlo como versión oficial: se mantiene la escala original declarada por cada bloque, y este análisis se reporta como verificación, no como ajuste a posteriori.
+
+## Sensibilidad a las muestras comerciales en la cata individual
+
+Este es el análogo del análisis de muestras comerciales, pero aplicado a `M_cata_individual` (52 unidades, 16 muestras independientes, 26 predictores al sumar las variables fermentativas JU) en vez de `M_pura`. La pregunta es la misma: el R² notoriamente más alto de este escenario, ¿depende también del contraste entre whiskies comerciales y experimentales?
+
+```{r sensibilidad-comerciales-ju-resumen}
+kable(read_excel("../data/modelamiento/sensibilidad_comerciales_cata_individual.xlsx", sheet = "02_resumen_comparativo"), digits = 3)
+```
+
+```{r sensibilidad-comerciales-ju-diferencias}
+kable(read_excel("../data/modelamiento/sensibilidad_comerciales_cata_individual.xlsx", sheet = "03_comparacion_diferencias"), digits = 3)
+```
+
+A diferencia de `M_pura`, aquí **la señal sí sobrevive** en el modelo principal: al excluir Dalwhinnie y Caol Ila, Random Forest restringido baja su MAE un 23.8% (0.515 a 0.392) y su R² agregado incluso sube (0.647 a 0.706), manteniendo un 98% de iteraciones con R² positivo. Ridge, en cambio, no sobrevive (R² agregado de -0.248 a -0.693), lo que refuerza que el desempeño de este escenario proviene de una estructura no lineal y no de una relación lineal simple.
+
+Esto no convierte a `M_cata_individual` en el escenario recomendado. Su ventaja se explica por dos condiciones que no son generalizables: un único catador, lo que elimina la variabilidad entre evaluadores que sí está presente en `M_pura`, y el doble de predictores. Lo que este análisis aporta es más acotado: muestra que la limitación detectada en `M_pura` (depender del contraste comercial-experimental) no es inevitable, y que con una fuente sensorial internamente consistente la señal química se sostiene incluso dentro del conjunto de muestras chilenas.
+
 # - RESULTADOS FINALES {.parte}
 
 ## Objetivo de esta parte
