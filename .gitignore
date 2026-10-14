@@ -1,0 +1,27 @@
+# Entorno virtual de Python (regenerable con requirements.txt)
+.venv/
+
+# Estado interno de RStudio
+.Rproj.user/
+
+# Archivos de sesion de R
+.RData
+.RDataTmp*
+.Rhistory
+
+# Datos no publicados (disponibles a solicitud, ver data/LEEME.md)
+data/*
+!data/LEEME.md
+outputs/
+
+# Salidas del reporte de RPubs (se regeneran al hacer Knit)
+reportes_rpubs/*.html
+reportes_rpubs/cache/
+reportes_rpubs/*_cache/
+reportes_rpubs/*_files/
+reportes_rpubs/rsconnect/
+
+# Temporales del sistema
+.DS_Store
+Thumbs.db
+~$*
