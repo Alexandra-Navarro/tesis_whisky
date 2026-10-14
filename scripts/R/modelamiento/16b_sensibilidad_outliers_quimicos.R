@@ -498,16 +498,17 @@ if (nrow(metricas_sensibilidad) > 0) {
     filter(target == "y_fenolico_comun") %>%
     mutate(
       modelo = factor(etiquetas_modelo_sens[as.character(modelo)], levels = etiquetas_modelo_sens),
-      version = factor(dplyr::recode(version, completo = "completo", sin_outliers_eda = "sin atipicos EDA"),
-                       levels = c("completo", "sin atipicos EDA"))
+      version = factor(dplyr::recode(version, completo = "completo", sin_outliers_eda = "sin atipicos"),
+                       levels = c("completo", "sin atipicos"))
     )
 
   p_comparacion <- ggplot(datos_graf_sens, aes(x = version, y = mae, fill = version)) +
     geom_boxplot(alpha = 0.6, outlier.alpha = 0.4, outlier.size = 1.2) +
     facet_wrap(~ modelo) +
     labs(
-      title = "Sensibilidad del MAE bootstrap a unidades atipicas del EDA",
-      subtitle = "Random Forest restringido y Ridge, M_pura, 100 iteraciones",
+      title = "Sensibilidad del MAE bootstrap a unidades atipicas",
+      subtitle = "Unidades atipicas del analisis exploratorio
+Random Forest restringido y Ridge, M_pura, 100 iteraciones",
       x = NULL, y = "MAE (test bootstrap)", fill = NULL
     ) +
     theme_minimal(base_size = 12) +
