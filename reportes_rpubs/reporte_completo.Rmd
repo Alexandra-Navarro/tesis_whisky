@@ -52,7 +52,7 @@ h1.parte {
 
 Esta parte documenta la construcción de las matrices de datos que integran la información química (GC-FID, GC-MS, fenoles totales por Folin, variables fermentativas JU) con la información sensorial (catas de panel y catas individuales), a partir de las tablas originales.
 
-El objetivo general de este trabajo es entender qué variables químicas podrían estar relacionadas con la calidad sensorial del whisky chileno. Esto se hace en un contexto de **small data**, es decir, con pocas muestras que tienen cata sensorial completa, muchas variables químicas disponibles y distintas fuentes de datos que no siempre coinciden entre sí. Por esta razón, no se construyó una única matriz de análisis, sino seis matrices diferentes, cada una con un propósito específico dentro del estudio. Así, cada matriz permite abordar una parte distinta del problema, evitando mezclar datos que no son directamente comparables y manteniendo claro qué información se está usando en cada caso.
+El objetivo general de este trabajo es entender qué variables químicas podrían estar relacionadas con la calidad sensorial del whisky chileno, entendida como la intensidad de los atributos de su perfil sensorial (principalmente el carácter fenólico percibido) y no como preferencia o aceptación. Esto se hace en un contexto de **small data**, es decir, con pocas muestras que tienen cata sensorial completa, muchas variables químicas disponibles y distintas fuentes de datos que no siempre coinciden entre sí. Por esta razón, no se construyó una única matriz de análisis, sino seis matrices diferentes, cada una con un propósito específico dentro del estudio. Así, cada matriz permite abordar una parte distinta del problema, evitando mezclar datos que no son directamente comparables y manteniendo claro qué información se está usando en cada caso.
 
 ## Las 6 matrices son las siguientes
 
@@ -749,7 +749,7 @@ kable(read_excel("../data/modelamiento/diagnostico_modelamiento.xlsx", sheet = "
 incluir_figuras("../outputs/modelamiento/diagnostico", "\\.png$")
 ```
 
-Para `M_pura` con `y_fenolico_comun` (target principal) hay 34 filas modelables, 18 predictores usables y 16 grados de libertad aproximados — viable. Para `y_frutal_comun`, en cambio, solo 13 filas quedan modelables (baja cobertura), lo que con los mismos 18 predictores da grados de libertad negativos (-5) y una marca de `critico_gl_insuficiente`: por eso este target se reporta siempre como secundario/exploratorio y nunca como evidencia central.
+Para `M_pura` con `y_fenolico_comun` (target principal) hay 34 filas modelables, 13 predictores usables (los 13 de GC-FID que definen el escenario principal) y 21 grados de libertad aproximados — viable. Para `y_frutal_comun`, en cambio, solo 13 filas quedan modelables (baja cobertura), lo que con los mismos 13 predictores deja 0 grados de libertad y una marca de `critico_gl_insuficiente`: por eso este target se reporta siempre como secundario/exploratorio y nunca como evidencia central.
 
 ## Colinealidad de predictores
 
@@ -759,13 +759,13 @@ Dado que los predictores provienen de técnicas analíticas no solapadas (GC-MS,
 kable(read_excel("../data/modelamiento/colinealidad_modelamiento.xlsx", sheet = "01_predictores_resumen"))
 ```
 
-De las 32 variables químicas, en `M_pura` quedan **18 usables** para correlación; las otras 14 quedan fuera por `sin_datos` (todo el bloque JU salvo unos pocos compuestos, porque casi no se solapa con unidades que tienen cata real) o por `menos_de_3_valores` (muy pocos casos con dato para estimar una correlación mínimamente confiable).
+`M_pura` se define sobre los **13 predictores de GC-FID**, y los 13 son usables para correlación. Las variables de GC-MS quedan fuera del escenario principal por su baja cobertura real (23.5% de las unidades; su efecto se evalúa aparte en la sección de sensibilidad a GC-MS), y el bloque JU casi no se solapa con unidades que tienen cata de panel.
 
 ```{r colinealidad-pares}
 kable(read_excel("../data/modelamiento/colinealidad_modelamiento.xlsx", sheet = "02_pares_alta_correlacion"))
 ```
 
-En `M_pura` hay **9 pares con correlación alta** (|r| ≥ 0.85), de los cuales **2 son muy altas** (r ≈ 0.96–1.00): los pares de variables agregadas de GC-MS que se construyen unas a partir de otras (`x_gcms_esteres_pct` con `x_gcms_aroma_fermentativo_pct`, y `x_gcms_fenolicos_pct` con `x_gcms_aldehidos_pct`), además de pares esperables entre compuestos químicamente emparentados (guaiacol y 4-etil-guaiacol; distintos ésteres de cadena larga). Esta es la razón concreta por la que se prefieren modelos regularizados o PLS en vez de una regresión lineal múltiple simple.
+En `M_pura` hay **2 pares con correlación alta** (|r| ≥ 0.85), ninguno por encima de 0.95: los fenoles volátiles guaiacol y 4-etil-guaiacol (r = 0.91), y los ésteres ethyl decanoate e isoamyl octanoate (r = 0.86). Aunque son pocos pares, esta colinealidad entre compuestos químicamente emparentados es la razón concreta por la que se prefieren modelos regularizados o PLS en vez de una regresión lineal múltiple simple.
 
 ### Mapas de calor de colinealidad por escenario
 
@@ -775,19 +775,19 @@ Cada mapa muestra la correlación de Pearson entre los predictores químicos má
 
 ![](../outputs/modelamiento/colinealidad/02_heatmap_colinealidad_M_pura.png){width=95%}
 
-En el escenario principal, la colinealidad relevante se concentra en dos bloques. En GC-FID, los fenoles volátiles guaiacol y 4-etil-guaiacol correlacionan fuerte (r = 0.91) — moléculas químicamente emparentadas que suelen producirse juntas durante el tostado/ahumado — y por otro lado los ésteres ethyl decanoate e isoamyl octanoate (r = 0.86). En GC-MS, varias variables agregadas están construidas unas a partir de otras: ésteres y aroma fermentativo son casi la misma variable (r = 1.00, porque el aroma fermentativo incluye a los ésteres en su cálculo), y fenólicos correlaciona muy fuerte con aldehídos (r = 0.96). El bloque JU no aparece en este escenario porque, al excluir la cata individual, casi no tiene solapamiento suficiente con las 34 unidades de `M_pura`.
+En el escenario principal, la colinealidad relevante se concentra en el bloque GC-FID: los fenoles volátiles guaiacol y 4-etil-guaiacol correlacionan fuerte (r = 0.91) — moléculas químicamente emparentadas que suelen producirse juntas durante el tostado/ahumado — y por otro lado los ésteres ethyl decanoate e isoamyl octanoate (r = 0.86). Los bloques GC-MS y JU no aparecen porque no forman parte de los predictores de `M_pura`.
 
 **Escenario `M_cata_individual`**
 
 ![](../outputs/modelamiento/colinealidad/02_heatmap_colinealidad_M_cata_individual.png){width=95%}
 
-Al agregar la cata individual JU (52 filas), el bloque JU sí alcanza el umbral y aparece con 12 variables — es, por lejos, el bloque más internamente colineal: casi todas las variables fermentativas (producción de etanol, pérdida de CO₂, consumo de maltosa, varios ésteres de cadena larga) se mueven juntas con r > 0.85, coherente con que todas reflejan el mismo proceso de fermentación medido de distintas formas. o-cresol y p-cresol, en cambio, correlacionan negativamente con ese grupo (hasta r = -0.97), y p-cresol en particular con el índice FACI (r = -0.98) — señal de que estos dos compuestos siguen una dinámica distinta al resto de las variables JU. Los bloques GC-FID y GC-MS mantienen el mismo patrón que en `M_pura`, porque siguen siendo las mismas 34 muestras químicas de base.
+Al agregar la cata individual JU (52 filas), el bloque JU sí alcanza el umbral y aparece con 12 variables — es, por lejos, el bloque más internamente colineal: casi todas las variables fermentativas (producción de etanol, pérdida de CO₂, consumo de maltosa, varios ésteres de cadena larga) se mueven juntas con r > 0.85, coherente con que todas reflejan el mismo proceso de fermentación medido de distintas formas. o-cresol y p-cresol, en cambio, correlacionan negativamente con ese grupo (hasta r = -0.97), y p-cresol en particular con el índice FACI (r = -0.98) — señal de que estos dos compuestos siguen una dinámica distinta al resto de las variables JU. El bloque GC-FID mantiene los mismos dos pares que en `M_pura` (r = 0.91 y 0.86), porque sus valores provienen de las mismas muestras químicas de base.
 
 **Escenario `M_expandida_evaluador`**
 
 ![](../outputs/modelamiento/colinealidad/02_heatmap_colinealidad_M_expandida_evaluador.png){width=95%}
 
-Como esta matriz repite las mismas 34 muestras químicas una vez por evaluador (685 filas), el patrón de colinealidad es esencialmente el mismo que en `M_pura` — se repiten los mismos dos bloques con valores muy similares (guaiacol y 4-etil-guaiacol suben incluso a r = 0.95). Esto confirma que la colinealidad es una propiedad de la química de las muestras, no del número de evaluadores que las calificaron.
+Como esta matriz repite las mismas 34 muestras químicas una vez por evaluador (685 filas), el patrón de colinealidad es esencialmente el de `M_pura`: guaiacol y 4-etil-guaiacol suben incluso a r = 0.95, y aparece además el par ethyl octanoate y o-cresol (r = 0.85). Esto confirma que la colinealidad es una propiedad de la química de las muestras, no del número de evaluadores que las calificaron.
 
 **Escenario `M_ia_exploratoria`**
 
@@ -809,7 +809,7 @@ En conjunto, los cinco mapas muestran que la colinealidad es una propiedad de la
 kable(read_excel("../data/modelamiento/resultados_modelo_base.xlsx", sheet = "00_resumen_metricas"))
 ```
 
-Para `M_pura` con `y_fenolico_comun`, la regresión lineal reducida logra MAE = 0.270 frente a MAE = 0.412 de la media de entrenamiento — una mejora de ~35% solo con hasta 3 predictores simples. Esto confirma que sí hay señal química aprovechable antes de pasar a los modelos más complejos, y fija la vara mínima que estos deben superar.
+Para `M_pura` con `y_fenolico_comun`, bajo validación agrupada dejando una muestra fuera, la regresión lineal reducida obtiene un MAE de 0.473 frente a 0.459 de la media de entrenamiento: con hasta 3 predictores simples no logra mejorar a la media. Estos dos valores fijan la vara mínima que deben superar los modelos candidatos.
 
 ```{r base-fig, results='asis'}
 incluir_figuras("../outputs/modelamiento/modelo_base", "\\.png$")
@@ -837,7 +837,7 @@ Validación con 100 iteraciones de bootstrap, agrupando por unidad analítica pa
 kable(read_excel("../data/modelamiento/validacion_bootstrap_cv.xlsx", sheet = "02_resumen_metricas_boot"))
 ```
 
-Para `M_pura` con `y_fenolico_comun`, Random Forest restringido, Ridge y PLS quedan muy cerca en MAE bootstrap (0.271, 0.274 y 0.280 respectivamente): una diferencia de apenas 0.003-0.009, pequeña frente a la desviación estándar del propio bootstrap (0.072 en Random Forest, 0.11-0.11 en Ridge y PLS). Esa diferencia de MAE, por sí sola, no alcanza para preferir un modelo sobre otro. Lo que sí distingue a Random Forest restringido es el R² (0.300, frente a 0.046 en Ridge y -0.049 en PLS) y una estabilidad de error clasificada como alta (media en Ridge y PLS), por lo que se recomienda como modelo principal del escenario por esos dos criterios, no por el MAE (detalle completo de esta comparación y de por qué se eligió en la Parte 4). Ridge y PLS se mantienen como modelos de referencia para la interpretación de variables, ya que su estructura lineal regularizada hace explícito el manejo de la colinealidad entre predictores químicos.
+Para `M_pura` con `y_fenolico_comun`, Random Forest restringido obtiene el menor MAE bootstrap (0.396, desviación estándar 0.160), seguido de Ridge (0.436) y de la media de entrenamiento (0.451); PLS, Elastic Net y Lasso quedan por encima de la media. Random Forest restringido es además el único modelo candidato con un R² agregado claramente positivo (0.247, con 68% de iteraciones con R² positivo, frente a -0.140 en Ridge y -0.663 en PLS) y el único con estabilidad de error media (baja en el resto), por lo que se recomienda como modelo principal del escenario. La señal es modesta y, como muestra la sección de sensibilidad a las muestras comerciales, depende del contraste entre muestras comerciales y experimentales. Ridge y PLS se mantienen como modelos de referencia para la interpretación de variables, ya que su estructura lineal regularizada hace explícito el manejo de la colinealidad entre predictores.
 
 ```{r bootstrap-fig, results='asis'}
 incluir_figuras("../outputs/modelamiento/validacion_bootstrap", "\\.png$")
@@ -851,7 +851,7 @@ Comparación del desempeño del modelo principal (Random Forest restringido) y d
 kable(read_excel("../data/modelamiento/sensibilidad_outliers_quimicos.xlsx", sheet = "02_resumen_comparativo"))
 ```
 
-Ambos modelos mantienen un MAE similar con y sin las unidades marcadas como atípicas (variación de un pocos puntos porcentuales, no un cambio de orden de magnitud), lo que indica que los resultados de `M_pura` no dependen de un puñado de valores extremos — un modelo frágil mostraría una caída marcada al remover esos puntos.
+Random Forest restringido varía un 6.3% en MAE al excluir las unidades marcadas como atípicas (0.396 a 0.421), por debajo del umbral de 10% usado como criterio de robustez, y su R² agregado se mantiene positivo (0.247 a 0.199). Ridge, en cambio, varía un 28.7% (0.436 a 0.561), lo que corresponde a una sensibilidad alta. En ambos modelos el MAE empeora al excluir esas unidades, es decir, no están inflando artificialmente el error: la señal del modelo principal no depende de un puñado de observaciones químicamente extremas.
 
 ```{r sensibilidad-fig, results='asis'}
 incluir_figuras("../outputs/modelamiento/sensibilidad_outliers", "\\.png$")
@@ -859,7 +859,7 @@ incluir_figuras("../outputs/modelamiento/sensibilidad_outliers", "\\.png$")
 
 ## Sensibilidad a la imputación de variables GC-MS
 
-Dentro de `M_pura`, las 5 variables GC-MS (`x_gcms_esteres_pct`, `x_gcms_fenolicos_pct`, `x_gcms_aldehidos_pct`, `x_gcms_aroma_fermentativo_pct`, `x_gcms_area_valida_pct`) tienen dato real en solo 8 de las 34 unidades (23.5% de cobertura); el resto se completa por la imputación por mediana descrita más arriba. Para verificar que el consenso de importancia de variables no depende críticamente de esos datos mayormente imputados, se repitió el mismo procedimiento de bootstrap agrupado (100 iteraciones, Random Forest restringido y Ridge, `M_pura`) comparando la versión completa (32 predictores, incluye GC-MS) contra una versión que excluye por completo los 5 predictores GC-MS, sin imputarlos.
+Las variables GC-MS tienen dato real en solo 8 de las 34 unidades de `M_pura` (23.5% de cobertura), por lo que el escenario principal se define únicamente sobre los 13 predictores de GC-FID. Para comprobar si agregarlas cambia los resultados, se repitió el bootstrap agrupado (100 iteraciones, Random Forest restringido y Ridge) con una versión que incorpora 3 variables GC-MS (ésteres, fenólicos y aldehídos), completadas por mediana dentro de cada partición. Las otras dos candidatas, área válida y aroma fermentativo, se excluyen porque no tienen una lectura química válida como predictor: la primera es un indicador de calidad del cromatograma y la segunda es la suma exacta de ésteres y aldehídos.
 
 ```{r sensibilidad-gcms-resumen}
 kable(read_excel("../data/modelamiento/sensibilidad_imputacion_gcms.xlsx", sheet = "03_resumen_comparativo"))
@@ -873,7 +873,7 @@ kable(read_excel("../data/modelamiento/sensibilidad_imputacion_gcms.xlsx", sheet
 incluir_figuras("../outputs/modelamiento/sensibilidad_imputacion_gcms", "\\.png$")
 ```
 
-Para **Random Forest restringido** (el modelo principal), el MAE bootstrap cambia menos de un 2% al quitar por completo las variables GC-MS, tanto en `y_fenolico_comun` como en `y_frutal_comun`: el resultado del modelo principal es robusto a la imputación de GC-MS. Para **Ridge**, el MAE de `y_fenolico_comun` sí cambia de forma moderada (variación de un 11.9%, mejorando al excluir GC-MS), lo que indica que Ridge apoya una parte de su ajuste en la señal de esas variables mayormente imputadas. En conjunto, esto confirma que la conclusión principal de la tesis (Random Forest restringido, fenoles volátiles GC-FID como variables más consistentes) no depende de los datos GC-MS imputados, pero recomienda tratar con cautela cualquier lectura de las variables GC-MS específicamente cuando aparecen en modelos lineales como Ridge, dado su nivel de cobertura real (23.5%).
+Para **Random Forest restringido**, incorporar las variables GC-MS cambia el MAE bootstrap en apenas un 0.9% (0.396 a 0.400) y el R² agregado casi no varía (0.247 a 0.257). En **Ridge** el cambio también es pequeño (MAE 0.436 a 0.452, un 3.7%; R² agregado -0.140 a -0.175). Las variables GC-MS no aportan señal adicional, lo que respalda haberlas dejado fuera del escenario principal; dada su cobertura real (23.5%), cualquier lectura específica de ellas debe tomarse con cautela.
 
 ## Sensibilidad a las muestras comerciales
 
@@ -959,15 +959,13 @@ kable(read_excel("../data/modelamiento/sensibilidad_comerciales_cata_individual.
 
 A diferencia de `M_pura`, aquí **la señal sí sobrevive** en el modelo principal: al excluir Dalwhinnie y Caol Ila, Random Forest restringido baja su MAE un 23.8% (0.515 a 0.392) y su R² agregado incluso sube (0.647 a 0.706), manteniendo un 98% de iteraciones con R² positivo. Ridge, en cambio, no sobrevive (R² agregado de -0.248 a -0.693), lo que refuerza que el desempeño de este escenario proviene de una estructura no lineal y no de una relación lineal simple.
 
-Esto no convierte a `M_cata_individual` en el escenario recomendado. Su ventaja se explica por dos condiciones que no son generalizables: un único catador, lo que elimina la variabilidad entre evaluadores que sí está presente en `M_pura`, y el doble de predictores. Lo que este análisis aporta es más acotado: muestra que la limitación detectada en `M_pura` (depender del contraste comercial-experimental) no es inevitable, y que con una fuente sensorial internamente consistente la señal química se sostiene incluso dentro del conjunto de muestras chilenas.
+Esto no convierte a `M_cata_individual` en el escenario recomendado. Respecto de `M_pura` cambian a la vez la fuente sensorial (un solo catador), el número de muestras independientes (de 10 a 16) y los predictores disponibles (de 13 a 26), por lo que su mayor desempeño no puede atribuirse a ninguno de esos factores por separado. Lo que este análisis sí muestra es que el desempeño de este escenario no depende de las dos muestras comerciales.
 
 # - RESULTADOS FINALES {.parte}
 
 ## Objetivo de esta parte
 
-Esta parte integra los resultados de las etapas anteriores: qué variables explican mejor la calidad sensorial fenólica, cómo se comparan los escenarios de modelamiento entre sí, qué tan robustos son los resultados frente a valores atípicos, y qué conclusiones se pueden sostener con la evidencia disponible.
-
-Un análisis más detallado en formato de guía de defensa (con preguntas anticipadas de comisión) está disponible en `outputs/modelamiento/analisis_finales/resultados_finales_y_guia_defensa.pdf`.
+Esta parte integra los resultados de las etapas anteriores: qué variables químicas se asocian con el carácter fenólico percibido, cómo se comparan los escenarios de modelamiento entre sí, qué tan robustos son los resultados y qué conclusiones se pueden sostener con la evidencia disponible.
 
 ## Interpretabilidad de variables
 
@@ -985,7 +983,7 @@ kable(read_excel("../data/modelamiento/interpretabilidad_modelos.xlsx", sheet = 
 incluir_figuras("../outputs/modelamiento/interpretabilidad", "\\.png$")
 ```
 
-Las variables más consistentes son fenoles volátiles medidos por GC-FID (guaiacol, p-cresol, o-cresol, 4-etil-guaiacol), lo cual es coherente desde el punto de vista químico con el atributo sensorial "fenólico" (asociado a compuestos derivados de la turba/ahumado). Variables fermentativas JU (consumo de maltosa, pérdida de CO₂, producción de etanol) aparecen como señales indirectas de apoyo, no como explicación causal directa.
+Las variables priorizadas por consenso son fenoles volátiles medidos por GC-FID (o-cresol, p-cresol, guaiacol y 4-etil-guaiacol), químicamente coherentes con el atributo "fenólico" (asociado a compuestos derivados de la turba y el ahumado). Ninguna variable de GC-MS ni de la cata individual JU participa en este consenso, porque ambos bloques quedaron fuera de los predictores del escenario principal. Esta coherencia química es un criterio de plausibilidad, no una confirmación empírica: como mostró la sensibilidad a las muestras comerciales, estas variables pierden relevancia al excluir Dalwhinnie y Caol Ila.
 
 ## Comparación final entre escenarios
 
@@ -1005,12 +1003,12 @@ kable(read_excel("../data/modelamiento/comparacion_escenarios_modelamiento.xlsx"
 
 La Parte 1 (Matriz 5) describió cómo se compone `M_cata_individual` (la matriz pura más 18 filas de una cata realizada por un solo catador, sin promedio de panel). Esta es la pregunta que esa matriz busca responder: ¿el modelo predice distinto si se agregan esas filas?
 
-| Escenario | Modelo | MAE bootstrap | R² bootstrap |
+| Escenario | Modelo | MAE bootstrap | R² agregado |
 |---|---|---:|---:|
-| `M_pura` (sin JU) | Random Forest restringido | 0.271 | 0.300 |
-| `M_cata_individual` (pura + JU) | Random Forest restringido | 0.330 | **0.758** |
+| `M_pura` (sin JU) | Random Forest restringido | 0.396 | 0.247 |
+| `M_cata_individual` (pura + JU) | Random Forest restringido | 0.515 | **0.647** |
 
-El R² sube de 0.30 a 0.76 al agregar la cata JU — una mejora grande. Pero esto **no es evidencia de que la química explique mejor la calidad fenólica**: es evidencia de que **un solo catador es sistemáticamente más fácil de predecir que el promedio de un panel** (menos ruido de agregación, menos variabilidad entre personas). Por eso la matriz pura oficial excluye esta cata — incluirla habría inflado artificialmente el desempeño del modelo sin que la señal química fuera realmente más fuerte. Esta comparación es, en sí misma, la justificación metodológica de por qué `M_pura` es el escenario principal y `M_cata_individual` solo un análisis de sensibilidad complementario.
+El R² agregado sube de 0.247 a 0.647 al agregar la cata JU, aunque el MAE también sube (0.396 a 0.515), porque el target de este escenario tiene un rango más amplio. Esta mejora en R² **no es evidencia de que la química explique mejor el carácter fenólico**: al pasar de `M_pura` a `M_cata_individual` cambian simultáneamente la fuente sensorial (un solo catador en vez del promedio de un panel), el número de muestras independientes (de 10 a 16) y los predictores disponibles (de 13 a 26). Una hipótesis plausible es que un solo catador reduzca la heterogeneidad entre evaluadores, pero la comparación no permite demostrarlo. Por eso `M_pura` se mantiene como escenario principal y `M_cata_individual` como análisis de sensibilidad.
 
 ## Robustez de los resultados
 
@@ -1034,17 +1032,17 @@ kable(read_excel("../data/modelamiento/residuos_diagnostico.xlsx", sheet = "09_r
 
 ## Conclusión
 
-Con la matriz pura corregida (34 filas, sin cata individual JU), la clasificación por nombre de los compuestos GC-MS de Constanza incorporada al pipeline (ver Parte 1, sección "Clasificación de compuestos GC-MS por familia química"), y una corrección de reproducibilidad en la validación bootstrap, **Random Forest restringido** es el modelo principal para `y_fenolico_comun`, por R² (0.30, frente a 0.05 en Ridge) y estabilidad de error (alta, frente a media en Ridge); el MAE bootstrap es prácticamente equivalente entre ambos (0.271 contra 0.274, una diferencia muy por debajo de la desviación estándar del propio bootstrap) y por lo tanto no es, por sí solo, el criterio que decide entre uno y otro modelo. Este resultado se mantuvo estable a través de las tres correcciones metodológicas del pipeline, lo que da confianza adicional en que no es un artefacto de una corrida particular. Ridge y PLS se mantienen como alternativas relevantes por su interpretabilidad y manejo explícito de la colinealidad entre predictores químicos, algo central en un contexto de *small data* con bloques analíticos no solapados.
+Con la matriz pura definitiva (34 unidades de 10 muestras independientes, 13 predictores de GC-FID, sin cata individual JU), **Random Forest restringido** es el mejor modelo para `y_fenolico_comun`: obtiene el menor MAE bootstrap (0.396), es el único modelo candidato con un R² agregado claramente positivo (0.247, con 68% de iteraciones positivas) y supera a los dos modelos base evaluados bajo el mismo esquema. Se trata, sin embargo, de una señal modesta, obtenida con muy pocas muestras independientes.
 
 Sobre la corrección de reproducibilidad: antes de la corrección, la semilla aleatoria usada para el bootstrap se fijaba una sola vez al inicio del script y se reutilizaba para todos los escenarios y targets en el orden en que el código los recorría, de modo que el resultado de un escenario dependía de cuántos números aleatorios ya se habían consumido en escenarios anteriores dentro de la misma corrida (dos corridas con los escenarios en distinto orden podían dar métricas bootstrap ligeramente distintas para el mismo escenario). La corrección fija una semilla determinística por combinación escenario-target (derivada de sus nombres, no del orden de ejecución), de modo que cada escenario-target produce siempre las mismas 100 muestras de bootstrap sin importar qué otros escenarios se hayan corrido antes. Tras la corrección se verificó que correr el pipeline completo dos veces produce exactamente las mismas métricas de resumen (MAE, RMSE, R², Spearman) para cada escenario-target, confirmando que el pipeline es ahora determinístico de extremo a extremo.
 
-Las variables más coherentes y estables para explicar la calidad fenólica son los fenoles volátiles cuantificados por GC-FID (guaiacol, p-cresol, o-cresol y 4-etil-guaiacol), lo que es consistente con la química conocida del carácter ahumado/fenólico del whisky. El análisis de sensibilidad confirma que estos resultados no dependen críticamente de un pequeño número de observaciones atípicas: el desempeño del modelo se mantiene comparable al excluir las unidades marcadas como atípicas en la etapa exploratoria. Tampoco dependen críticamente de las variables GC-MS, que tienen cobertura real baja (23.5%) dentro de `M_pura`: excluirlas por completo cambia el MAE bootstrap de Random Forest restringido en menos de un 2%.
+Las variables priorizadas son fenoles volátiles cuantificados por GC-FID (o-cresol, p-cresol, guaiacol y 4-etil-guaiacol), químicamente coherentes con el carácter ahumado y fenólico del whisky. El resultado es robusto a varias decisiones metodológicas: al excluir las unidades atípicas del análisis exploratorio el MAE de Random Forest restringido cambia un 6.3%, al incorporar las variables GC-MS un 0.9%, al excluir las unidades sin GC-FID real el R² agregado se mantiene positivo (0.221), y al reescalar el bloque de septiembre tampoco cambia la conclusión. La excepción decisiva son las muestras comerciales: al excluir Dalwhinnie y Caol Ila, el R² agregado cae de 0.247 a -0.147 entre las ocho muestras experimentales chilenas restantes, y las variables que sostenían el modelo dejan de ser relevantes.
 
-La comparación entre escenarios aporta un hallazgo metodológico relevante: al agregar la cata individual JU a la matriz pura (`M_cata_individual`), el desempeño del modelo sube notoriamente (R² cercano al que se observaba antes de excluir JU por error). Esto confirma que gran parte de la señal "fácil" de versiones anteriores del análisis provenía específicamente de la cata de un solo evaluador, más fácil de predecir que el promedio de un panel — y refuerza que la exclusión de JU de la matriz principal fue la decisión metodológicamente correcta, no una pérdida de información sino una corrección de rigor.
+La comparación entre escenarios muestra que los R² más altos (`M_cata_individual`, 0.647, y `M_ia_exploratoria`, 0.510) se obtienen en condiciones distintas a las del escenario principal, por lo que se interpretan dentro de sus roles de sensibilidad y exploración, y no como evidencia adicional de una relación químico-sensorial más fuerte.
 
-En conjunto, la evidencia respalda que la calidad fenólica del whisky chileno estudiado está asociada de forma identificable y razonablemente estable a un grupo acotado de compuestos fenólicos volátiles, en un contexto donde el tamaño muestral impone límites claros a la magnitud de las conclusiones: este estudio se entiende como exploratorio / prueba de concepto, no como un modelo predictivo listo para uso industrial.
+En conjunto, la evidencia no permite sostener que la composición química medida explique de forma confiable el carácter fenólico percibido dentro del whisky chileno específicamente: la señal detectada por el modelo principal refleja, en gran medida, la diferencia entre las muestras comerciales importadas, principalmente Caol Ila por su turba marcada, y las experimentales chilenas. El aporte del estudio es un diagnóstico metodológico riguroso que delimita esa conclusión y establece qué condiciones deben fortalecerse (más muestras independientes, una fuente sensorial homogénea y mayor cobertura química) para validaciones futuras. Debe entenderse como exploratorio, no como un modelo predictivo listo para uso industrial.
 
 ## Escenarios complementarios y su rol
 
-- **`M_expandida_evaluador`**: no mejora sustancialmente el desempeño respecto a la matriz pura promediada; se mantiene como evidencia complementaria, no como reemplazo.
-- **`M_ia_exploratoria`**: catas sintéticas de consenso IA (Gemini/Claude/GPT), presentadas siempre como escenario exploratorio, nunca como sustituto de una cata real. Su R² bootstrap (0.66) es notoriamente más alto que el de `M_pura` (0.30), pero **no debe leerse como evidencia de que la IA predice mejor la calidad sensorial que el panel humano**: en este escenario el propio target sensorial fue generado por consenso de los mismos modelos de lenguaje a partir de la evidencia química disponible, de modo que el modelo predictivo tiene una tarea más fácil (recuperar la regla interna que usaron los LLM para pasar de química a puntaje) en vez de la tarea real (predecir la percepción de un panel humano, con todo su ruido e idiosincrasia). El R² alto es, en gran parte, una medida de consistencia interna del propio proceso de generación IA, no de validez predictiva real. Con esa salvedad explícita, el escenario abre una línea futura de uso de IA como herramienta exploratoria complementaria en investigación sensorial de small data, no como reemplazo de evidencia sensorial real.
+- **`M_expandida_evaluador`**: obtiene el peor MAE de los cuatro escenarios (0.823) y el R² agregado más bajo (0.109); expandir la matriz a nivel de evaluador individual sin promediar no aporta señal química independiente adicional. Se mantiene como evidencia complementaria, no como reemplazo.
+- **`M_ia_exploratoria`**: catas sintéticas de consenso IA (Gemini/Claude/GPT), presentadas siempre como escenario exploratorio, nunca como sustituto de una cata real. Su mejor modelo, Gradient Boosting restringido, alcanza un R² agregado de 0.510, más alto que el 0.247 de `M_pura`, pero **no debe leerse como evidencia de que la IA predice mejor el carácter fenólico percibido que el panel humano**: en este escenario el propio target sensorial fue generado por consenso de los mismos modelos de lenguaje a partir de la evidencia química disponible, de modo que el modelo predictivo tiene una tarea más fácil (recuperar la regla interna que usaron los LLM para pasar de química a puntaje) en vez de la tarea real (predecir la percepción de un panel humano, con todo su ruido e idiosincrasia). El R² alto es, en gran parte, una medida de consistencia interna del propio proceso de generación IA, no de validez predictiva real. Con esa salvedad explícita, el escenario abre una línea futura de uso de IA como herramienta exploratoria complementaria en investigación sensorial de small data, no como reemplazo de evidencia sensorial real.

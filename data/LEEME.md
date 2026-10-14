@@ -30,6 +30,18 @@ data/originales/
     └── sensorial_cepas_JU.xlsx
 ```
 
-Las carpetas `data/procesamiento/`, `data/modelamiento/` y `outputs/` no se incluyen
-porque contienen datos derivados de esos archivos. Los scripts las vuelven a generar al
-ejecutarse en orden (ver `README.md`).
+Además, el escenario exploratorio `M_ia_exploratoria` (script `08_matriz_datos_ia.R`)
+usa las catas generadas por modelos de lenguaje, que no se obtienen de ningún script y
+deben copiarse en `data/procesamiento/catas_ia/`:
+
+```
+data/procesamiento/catas_ia/
+├── catas_ia_claude.xlsx
+├── catas_ia_gpt.xlsx
+└── cata_ia_geminis.xlsx
+```
+
+El resto de `data/procesamiento/`, `data/modelamiento/` y `outputs/` no se incluye
+porque contiene datos derivados de esos archivos. Los scripts lo vuelven a generar al
+ejecutarse en orden; el script `scripts/R/ejecutar_todo.R` ejecuta el flujo completo
+(ver `README.md`).

@@ -66,7 +66,9 @@ planilla de salida del script correspondiente.
 ## Cómo ejecutar
 
 1. Instalar R 4.5.3 o superior (RStudio es opcional pero recomendado).
-2. Clonar este repositorio, conservando su estructura interna.
+2. Clonar este repositorio, conservando su estructura interna. En Windows conviene
+   ubicarlo en una ruta corta: si la carpeta base es muy larga, algunas salidas superan
+   el límite de 260 caracteres de ruta del sistema y el script que las guarda falla.
 3. Abrir `Modelamiento.Rproj`, o bien fijar el directorio de trabajo en la raíz de
    `Modelamiento/` con `setwd()`. Todas las rutas internas se construyen desde esa raíz.
 4. `scripts/R/procesamiento/00_resumen_datos_iniciales.R` es el punto de entrada: define
@@ -78,8 +80,10 @@ planilla de salida del script correspondiente.
 6. Solicitar los datos a la autora y copiarlos en `data/originales/` con sus nombres
    originales, según [`data/LEEME.md`](data/LEEME.md), ya que la clasificación inicial se
    apoya en ellos.
-7. Ejecutar los scripts en orden de numeración. Cada script vuelve a cargar el `00`, por
-   lo que una etapa puede re-ejecutarse sin repetir las anteriores si sus insumos existen.
+7. Ejecutar los scripts en orden de numeración, o el flujo completo de una vez con
+   `source("scripts/R/ejecutar_todo.R")` (o `Rscript scripts/R/ejecutar_todo.R` desde la
+   raíz). Cada script vuelve a cargar el `00`, por lo que una etapa puede re-ejecutarse sin
+   repetir las anteriores si sus insumos existen.
 8. Revisar las salidas en `data/procesamiento/`, `data/modelamiento/` y `outputs/`.
 
 Las semillas están fijadas de forma explícita (semilla global `123`, más semillas
@@ -97,6 +101,7 @@ opcional y no alimenta a ningún otro script.
 
 | Script | Qué produce |
 |--------|-------------|
+| `ejecutar_todo.R` | Ejecuta los scripts `01` a `20` en orden, cada uno en un proceso de R independiente (excluye `16i`, opcional) |
 | `00_resumen_datos_iniciales.R` | Configuración central: rutas, paquetes y normalización de nombres |
 | `01_clasificar_datos_iniciales.R` | Clasificación de archivos originales en bloques químicos y sensoriales |
 | `02_extraer_quimica.R` | Extracción y normalización de GC-FID, GC-MS, fenoles totales y cepas fermentativas |
