@@ -28,6 +28,13 @@
 # agrupado de 16_validacion_bootstrap_cv.R sobre las 34 unidades (10 muestras
 # independientes, sin excluir ninguna), comparando la version "original"
 # contra la version "reescalado_0a5".
+#
+# El reescalado (y - 1) * 5 / 4 no reduce el rango de esas 9 filas: lo amplia
+# en 25% y baja sus valores entre 0.64 y 0.74 puntos, mas que el desfase
+# observado entre escalas. Por eso se agrega una tercera version,
+# "desfase_restado", que resta a las 9 filas el desfase medio observado en
+# las muestras evaluadas en ambos bloques (B1, C70 y H76), calculado desde
+# los propios datos, sin cambiar su rango.
 
 # ------------------------------------------------------------
 # 1. Configuracion
@@ -442,6 +449,50 @@ comparacion_pareada <- df_base %>%
 cat("\nComparacion pareada por muestra (misma muestra fisica, distinto bloque):\n")
 print(as.data.frame(comparacion_pareada), row.names = FALSE)
 
+# Desfase observado: promedio por muestra de (septiembre - enero) en las
+# muestras evaluadas en ambos bloques.
+desfase_por_muestra <- comparacion_pareada %>%
+  group_by(identificador_quimico, bloque_sensorial) %>%
+  summarise(y = mean(y_fenolico_comun, na.rm = TRUE), .groups = "drop") %>%
+  tidyr::pivot_wider(names_from = bloque_sensorial, values_from = y) %>%
+  filter(!is.na(.data[[bloque_escala_distinta]]), !is.na(cata_social_enero_2025)) %>%
+  mutate(desfase = .data[[bloque_escala_distinta]] - cata_social_enero_2025)
+desfase_observado <- mean(desfase_por_muestra$desfase)
+cat("\nDesfase medio observado (septiembre - enero):", round(desfase_observado, 3), "\n")
+
+df_desfase <- df_base
+df_desfase$y_fenolico_comun[es_septiembre] <- df_desfase$y_fenolico_comun[es_septiembre] - desfase_observado
+
+# Efecto de cada transformacion sobre las 9 filas de septiembre y sobre el
+# desfase pareado con la cata social de enero.
+resumir_transformacion <- function(df, nombre) {
+  y_sep <- df$y_fenolico_comun[es_septiembre]
+  y_ori <- df_base$y_fenolico_comun[es_septiembre]
+  pares <- df %>%
+    filter(identificador_quimico %in% desfase_por_muestra$identificador_quimico,
+           bloque_sensorial %in% c(bloque_escala_distinta, "cata_social_enero_2025")) %>%
+    group_by(identificador_quimico, bloque_sensorial) %>%
+    summarise(y = mean(y_fenolico_comun, na.rm = TRUE), .groups = "drop") %>%
+    tidyr::pivot_wider(names_from = bloque_sensorial, values_from = y)
+  data.frame(
+    version = nombre,
+    rango_filas_septiembre = max(y_sep, na.rm = TRUE) - min(y_sep, na.rm = TRUE),
+    cambio_rango_pct = round(100 * ((max(y_sep, na.rm = TRUE) - min(y_sep, na.rm = TRUE)) /
+                                      (max(y_ori, na.rm = TRUE) - min(y_ori, na.rm = TRUE)) - 1), 1),
+    baja_minima = min(y_ori - y_sep, na.rm = TRUE),
+    baja_maxima = max(y_ori - y_sep, na.rm = TRUE),
+    desfase_pareado_medio = mean(pares[[bloque_escala_distinta]] - pares$cata_social_enero_2025),
+    stringsAsFactors = FALSE
+  )
+}
+efecto_transformaciones <- bind_rows(
+  resumir_transformacion(df_original, "original"),
+  resumir_transformacion(df_reescalado, "reescalado_0a5"),
+  resumir_transformacion(df_desfase, "desfase_restado")
+)
+cat("\nEfecto de cada version sobre las filas de septiembre:\n")
+print(efecto_transformaciones)
+
 # ------------------------------------------------------------
 # 4. Bootstrap para cada version
 # ------------------------------------------------------------
@@ -451,8 +502,8 @@ importancia_sensibilidad <- list()
 k <- 1
 ki <- 1
 
-for (version in c("original", "reescalado_0a5")) {
-  df_version <- if (version == "original") df_original else df_reescalado
+for (version in c("original", "reescalado_0a5", "desfase_restado")) {
+  df_version <- switch(version, original = df_original, reescalado_0a5 = df_reescalado, desfase_restado = df_desfase)
   df_modelo <- df_version %>% filter(!is.na(.data[[target_a_evaluar]]))
 
   if (nrow(df_modelo) < min_n_target_modelable || dplyr::n_distinct(df_modelo$grupo_validacion) < 4) {
@@ -503,19 +554,24 @@ if (nrow(metricas_sensibilidad) > 0) {
     ) %>%
     arrange(modelo, target, version)
 
+  # Cada version corregida frente a la original. Se marca si el cambio de MAE
+  # supera el umbral de 10% usado en los demas analisis de sensibilidad.
   comparacion_diferencias <- resumen_sensibilidad %>%
-    select(modelo, target, version, mae_media, r2_agregado) %>%
-    pivot_wider(names_from = version, values_from = c(mae_media, r2_agregado)) %>%
+    group_by(modelo, target) %>%
     mutate(
-      diferencia_mae = mae_media_reescalado_0a5 - mae_media_original,
-      diferencia_mae_pct = round(100 * diferencia_mae / mae_media_original, 1),
-      diferencia_r2_agregado = r2_agregado_reescalado_0a5 - r2_agregado_original,
-      lectura = case_when(
-        is.na(r2_agregado_reescalado_0a5) ~ "no_comparable",
-        abs(diferencia_r2_agregado) < 0.02 ~ "sin_cambio_relevante: el R2 agregado no cambia de forma apreciable al reescalar cata_septiembre_2024",
-        r2_agregado_reescalado_0a5 > r2_agregado_original ~ "mejora_al_reescalar",
-        TRUE ~ "empeora_al_reescalar"
-      )
+      mae_media_original = mae_media[version == "original"],
+      r2_agregado_original = r2_agregado[version == "original"]
+    ) %>%
+    ungroup() %>%
+    filter(version != "original") %>%
+    transmute(
+      modelo, target, version,
+      mae_media_original, mae_media_version = mae_media,
+      diferencia_mae_pct = round(100 * (mae_media - mae_media_original) / mae_media_original, 1),
+      r2_agregado_original, r2_agregado_version = r2_agregado,
+      diferencia_r2_agregado = r2_agregado - r2_agregado_original,
+      r2_pct_positivo_version = r2_pct_positivo,
+      supera_umbral_mae_10pct = abs(diferencia_mae_pct) > 10
     )
 }
 
@@ -578,7 +634,7 @@ resumen_general <- data.frame(
     "escenario", "target", "modelos_evaluados", "n_bootstrap_por_version",
     "n_unidades_totales", "n_muestras_independientes",
     "n_unidades_cata_septiembre_2024", "muestras_con_septiembre",
-    "transformacion_reescalado", "archivo_salida"
+    "transformacion_reescalado", "desfase_observado", "transformacion_desfase", "archivo_salida"
   ),
   valor = c(
     escenario_id, target_a_evaluar, paste(modelos_a_evaluar, collapse = "; "), as.character(n_bootstrap),
@@ -586,6 +642,8 @@ resumen_general <- data.frame(
     as.character(sum(es_septiembre)),
     paste(sort(unique(df_base$identificador_quimico[es_septiembre])), collapse = ", "),
     "y_reescalado = (y_original - 1) * 5 / 4, aplicado solo a filas de cata_septiembre_2024",
+    as.character(round(desfase_observado, 4)),
+    "y_desfase = y_original - desfase_observado, aplicado solo a filas de cata_septiembre_2024",
     ruta_salida_excel
   ),
   stringsAsFactors = FALSE
@@ -593,16 +651,17 @@ resumen_general <- data.frame(
 
 notas <- data.frame(
   punto = c(
-    "Que compara", "Que es 'original'", "Que es 'reescalado_0a5'",
+    "Que compara", "Que es 'original'", "Que es 'reescalado_0a5'", "Que es 'desfase_restado'",
     "Comparacion pareada", "Metodologia", "Interpretacion", "Limite"
   ),
   descripcion = c(
     "Random Forest restringido y Ridge, con el mismo procedimiento de validacion (bootstrap agrupado por identificador_quimico, 100 iteraciones), cada uno ajustado dos veces sobre M_pura y_fenolico_comun: con la escala original declarada por cada bloque sensorial, y reescalando linealmente a 0-5 las 9 unidades de cata_septiembre_2024 (unico bloque en escala 1-5).",
     paste0("M_pura sin modificar: ", nrow(df_base), " unidades analiticas, ", dplyr::n_distinct(df_base$identificador_quimico), " muestras independientes, y_fenolico_comun tal como se declara en la seccion imp:fuentes."),
-    "M_pura con las 9 unidades de cata_septiembre_2024 reescaladas a 0-5 mediante (y-1)*5/4; las 25 unidades restantes (ya en escala 0-5) no se modifican. Mismas 34 unidades y 10 muestras independientes que la version original.",
+    "M_pura con las 9 unidades de cata_septiembre_2024 reescaladas a 0-5 mediante (y-1)*5/4; las 25 unidades restantes (ya en escala 0-5) no se modifican. Esta transformacion amplia en 25% el rango de esas filas y baja sus valores entre 0.64 y 0.74 puntos, mas que el desfase observado entre escalas.",
+    "M_pura con el desfase medio observado entre cata_septiembre_2024 y cata_social_enero_2025 (en B1, C70 y H76) restado a las 9 unidades de septiembre, sin cambiar su rango. Corrige solo el desplazamiento medido en los datos.",
     "B1, C70 y H76 son las unicas muestras con filas en ambos bloques (cata_septiembre_2024 y cata_social_enero_2025), lo que permite comparar directamente el mismo whisky bajo las dos escalas antes de cualquier modelo.",
     "Hiperparametros y logica de bootstrap identicos a 16_validacion_bootstrap_cv.R para que la comparacion sea metodologicamente equivalente. R2 calculado de forma agregada (SSE y SST sumados sobre todas las predicciones fuera de bolsa, referencia = media del pliegue de entrenamiento de cada iteracion), no promediando el R2 de cada iteracion.",
-    "Si el R2 agregado y el MAE no cambian de forma apreciable entre 'original' y 'reescalado_0a5', el desempeno del modelo principal no depende del piso de escala distinto de cata_septiembre_2024.",
+    "Se reportan ambas correcciones frente a la original. Si el MAE cambia mas de 10% (umbral de los demas analisis de sensibilidad), el resultado no se presenta como robusto. Un alza del R2 agregado puede deberse a que las 9 filas, todas experimentales, se alejan de las comerciales, y no necesariamente a una mejor senal quimica.",
     "La transformacion lineal aplicada asume que el desplazamiento de escala es puramente aditivo/proporcional (mismo piso para los 5 descriptores fuente). No corrige un eventual sesgo del panel de ese bloque especifico, solo el artefacto de escala declarado en la seccion imp:fuentes."
   ),
   stringsAsFactors = FALSE
@@ -611,6 +670,7 @@ notas <- data.frame(
 lista_hojas <- list(
   "00_resumen" = resumen_general,
   "01_comparacion_pareada" = comparacion_pareada,
+  "01b_efecto_transformaciones" = efecto_transformaciones,
   "02_metricas_bootstrap" = metricas_sensibilidad,
   "03_resumen_comparativo" = resumen_sensibilidad,
   "04_comparacion_diferencias" = comparacion_diferencias,
@@ -626,9 +686,9 @@ cat("Archivo generado:\n", ruta_salida_excel, "\n")
 if (!is.na(ruta_grafico)) cat("Grafico generado:\n", ruta_grafico, "\n")
 cat("\nResumen comparativo:\n")
 print(resumen_sensibilidad)
-cat("\nDiferencias original vs. reescalado_0a5:\n")
+cat("\nDiferencias de cada version frente a la original:\n")
 if (nrow(comparacion_diferencias) > 0) {
-  print(comparacion_diferencias %>% select(modelo, target, diferencia_mae, diferencia_mae_pct, diferencia_r2_agregado, lectura))
+  print(comparacion_diferencias %>% select(modelo, version, diferencia_mae_pct, r2_agregado_original, r2_agregado_version, supera_umbral_mae_10pct))
 }
 cat("\nVariables prioritarias (Random Forest) por version:\n")
 print(variables_por_version)

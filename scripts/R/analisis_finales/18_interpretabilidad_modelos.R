@@ -404,6 +404,41 @@ if (nrow(pares_colineales) > 0 && nrow(consenso_variables) > 0) {
 }
 
 # ------------------------------------------------------------
+# 6b. Deteccion de los fenoles volatiles por muestra (M_pura)
+# ------------------------------------------------------------
+# Cuenta, para cada muestra con GC-FID medido, en cuantas de sus filas se
+# detecta cada fenol (valor > 0) y su concentracion media. Sostiene la lectura
+# de la seccion 5.1 sobre que compuestos funcionan como indicadores de
+# presencia o ausencia y en que muestras aparecen.
+ruta_datos_modelamiento <- file.path(dir_modelamiento, "datos_modelamiento.xlsx")
+fenoles_deteccion <- c(
+  guaiacol = "x_gcfid_guaiacol_ppm",
+  etil_guaiacol_4 = "x_gcfid_4_ethyl_guaiacol_ppm",
+  o_cresol = "x_gcfid_o_cresol_ppm",
+  p_cresol = "x_gcfid_p_cresol_ppm"
+)
+deteccion_fenoles_muestra <- data.frame()
+if (file.exists(ruta_datos_modelamiento)) {
+  pura_deteccion <- readxl::read_excel(ruta_datos_modelamiento, sheet = "01_pura") %>% as.data.frame()
+  for (v in fenoles_deteccion) pura_deteccion[[v]] <- suppressWarnings(as.numeric(pura_deteccion[[v]]))
+  # filas con GC-FID medido: las que tienen dato en p-cresol, cuantificado en todas ellas
+  pura_deteccion <- pura_deteccion[!is.na(pura_deteccion[[fenoles_deteccion[["p_cresol"]]]]), ]
+  deteccion_fenoles_muestra <- pura_deteccion %>%
+    group_by(identificador_quimico) %>%
+    summarise(
+      filas_gcfid = n(),
+      across(all_of(unname(fenoles_deteccion)), list(
+        detectadas = ~ sum(.x > 0, na.rm = TRUE),
+        media_ppm = ~ mean(pmax(.x, 0), na.rm = TRUE)
+      )),
+      y_fenolico_medio = mean(as.numeric(y_fenolico_comun), na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    arrange(desc(y_fenolico_medio)) %>%
+    as.data.frame()
+}
+
+# ------------------------------------------------------------
 # 7. Graficos
 # ------------------------------------------------------------
 
@@ -717,7 +752,8 @@ diccionario <- data.frame(
     "07_colinealidad_variables",
     "08_residuos_apoyo",
     "09_notas_metodologicas",
-    "10_graficos_generados"
+    "10_graficos_generados",
+    "12_deteccion_fenoles_muestra"
   ),
   descripcion = c(
     "Resumen de conteos del script.",
@@ -730,7 +766,8 @@ diccionario <- data.frame(
     "Relacion entre variables priorizadas y pares colineales, si esta disponible.",
     "Resumen residual de apoyo, si fue generado por el script 16.",
     "Criterios metodologicos para interpretar resultados.",
-    "Rutas de figuras generadas."
+    "Rutas de figuras generadas.",
+    "Deteccion (valor > 0) y concentracion media de guaiacol, 4-etil-guaiacol, o-cresol y p-cresol en cada muestra de M_pura con GC-FID medido."
   ),
   stringsAsFactors = FALSE
 )
@@ -751,7 +788,8 @@ hojas_salida <- list(
   "08_residuos_apoyo" = resumen_residuos,
   "09_notas_metodologicas" = notas_metodologicas,
   "10_graficos_generados" = graficos_generados,
-  "11_diccionario" = diccionario
+  "11_diccionario" = diccionario,
+  "12_deteccion_fenoles_muestra" = deteccion_fenoles_muestra
 )
 
 hojas_salida <- hojas_salida[vapply(hojas_salida, function(x) is.data.frame(x) && nrow(x) > 0, logical(1))]
