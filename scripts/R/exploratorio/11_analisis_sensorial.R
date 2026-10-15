@@ -924,8 +924,21 @@ t2q_sensorial_outliers <- pca_sensorial_scores %>%
 
 # ------------------------------------------------------------
 # ETAPA 9: Concordancia entre evaluadores (ICC(1) de una via, sin paquetes adicionales)
-# Mide si el promedio por muestra es confiable frente al ruido entre evaluadores:
-# ICC alto = los evaluadores diferencian las muestras de forma consistente en ese target.
+# ICC(1) mide la concordancia de una evaluacion individual: alto = los evaluadores
+# diferencian las muestras de forma consistente en ese target.
+# ICC(1,k) sale del mismo ANOVA de una via y mide la confiabilidad del PROMEDIO de
+# los k evaluadores de cada muestra, que es lo que se usa como target:
+#   ICC(1)   = (CM_entre - CM_dentro) / (CM_entre + (k - 1) * CM_dentro)
+#   ICC(1,k) = (CM_entre - CM_dentro) / CM_entre
+# con k = numero medio de evaluaciones por muestra (n0, corregido por desbalance).
+# Intervalos de confianza al 95% a partir de la distribucion F (Shrout y Fleiss,
+# 1979; McGraw y Wong, 1996). Con datos desbalanceados son aproximados.
+
+icc_vacio <- function(p, n_total) {
+  c(icc1 = NA_real_, icc1_ic_inf = NA_real_, icc1_ic_sup = NA_real_,
+    icc1k = NA_real_, icc1k_ic_inf = NA_real_, icc1k_ic_sup = NA_real_,
+    k_medio = NA_real_, n_grupos = p, n_observaciones = n_total)
+}
 
 calcular_icc1 <- function(grupo, valor) {
   datos <- data.frame(grupo = grupo, valor = valor, stringsAsFactors = FALSE)
@@ -935,14 +948,14 @@ calcular_icc1 <- function(grupo, valor) {
   n_total <- nrow(datos)
 
   if (p < 2 || n_total < p + 1) {
-    return(c(icc1 = NA_real_, n_grupos = p, n_observaciones = n_total))
+    return(icc_vacio(p, n_total))
   }
 
   medias_grupo <- tapply(datos$valor, datos$grupo, mean)
   n_grupo <- tapply(datos$valor, datos$grupo, length)
 
   if (all(n_grupo <= 1)) {
-    return(c(icc1 = NA_real_, n_grupos = p, n_observaciones = n_total))
+    return(icc_vacio(p, n_total))
   }
 
   media_global <- mean(datos$valor)
@@ -953,18 +966,31 @@ calcular_icc1 <- function(grupo, valor) {
 
   df_b <- p - 1
   df_w <- n_total - p
-  if (df_w <= 0) return(c(icc1 = NA_real_, n_grupos = p, n_observaciones = n_total))
+  if (df_w <= 0) return(icc_vacio(p, n_total))
 
   msb <- ssb / df_b
   msw <- ssw / df_w
   n0 <- (n_total - sum(n_grupo^2) / n_total) / df_b
 
   if (n0 <= 0 || (msb + (n0 - 1) * msw) == 0) {
-    return(c(icc1 = NA_real_, n_grupos = p, n_observaciones = n_total))
+    return(icc_vacio(p, n_total))
   }
 
   icc1 <- (msb - msw) / (msb + (n0 - 1) * msw)
-  c(icc1 = icc1, n_grupos = p, n_observaciones = n_total)
+
+  # ICC(1,k) e intervalos de confianza al 95% (si CM_dentro o CM_entre son 0 no se calculan)
+  icc1k <- if (msb > 0) (msb - msw) / msb else NA_real_
+  ic <- rep(NA_real_, 4)
+  if (msb > 0 && msw > 0) {
+    f_obs <- msb / msw
+    f_inf <- f_obs / stats::qf(0.975, df_b, df_w)
+    f_sup <- f_obs * stats::qf(0.975, df_w, df_b)
+    ic <- c((f_inf - 1) / (f_inf + n0 - 1), (f_sup - 1) / (f_sup + n0 - 1), 1 - 1 / f_inf, 1 - 1 / f_sup)
+  }
+
+  c(icc1 = icc1, icc1_ic_inf = ic[1], icc1_ic_sup = ic[2],
+    icc1k = icc1k, icc1k_ic_inf = ic[3], icc1k_ic_sup = ic[4],
+    k_medio = n0, n_grupos = p, n_observaciones = n_total)
 }
 
 interpretar_icc <- function(icc1) {
@@ -984,6 +1010,12 @@ concordancia_muestras <- sensorial_largo_completo %>%
   summarise(resultado = list(calcular_icc1(muestra_cata, valor)), .groups = "drop") %>%
   mutate(
     icc1 = sapply(resultado, function(x) unname(x["icc1"])),
+    icc1_ic_inf = sapply(resultado, function(x) unname(x["icc1_ic_inf"])),
+    icc1_ic_sup = sapply(resultado, function(x) unname(x["icc1_ic_sup"])),
+    icc1k = sapply(resultado, function(x) unname(x["icc1k"])),
+    icc1k_ic_inf = sapply(resultado, function(x) unname(x["icc1k_ic_inf"])),
+    icc1k_ic_sup = sapply(resultado, function(x) unname(x["icc1k_ic_sup"])),
+    k_medio = sapply(resultado, function(x) unname(x["k_medio"])),
     n_muestras = sapply(resultado, function(x) unname(x["n_grupos"])),
     n_observaciones = sapply(resultado, function(x) unname(x["n_observaciones"]))
   ) %>%
@@ -998,6 +1030,12 @@ concordancia_categoria_catador <- sensorial_largo_completo %>%
   summarise(resultado = list(calcular_icc1(muestra_cata, valor)), .groups = "drop") %>%
   mutate(
     icc1 = sapply(resultado, function(x) unname(x["icc1"])),
+    icc1_ic_inf = sapply(resultado, function(x) unname(x["icc1_ic_inf"])),
+    icc1_ic_sup = sapply(resultado, function(x) unname(x["icc1_ic_sup"])),
+    icc1k = sapply(resultado, function(x) unname(x["icc1k"])),
+    icc1k_ic_inf = sapply(resultado, function(x) unname(x["icc1k_ic_inf"])),
+    icc1k_ic_sup = sapply(resultado, function(x) unname(x["icc1k_ic_sup"])),
+    k_medio = sapply(resultado, function(x) unname(x["k_medio"])),
     n_muestras = sapply(resultado, function(x) unname(x["n_grupos"])),
     n_observaciones = sapply(resultado, function(x) unname(x["n_observaciones"]))
   ) %>%
