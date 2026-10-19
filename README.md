@@ -16,9 +16,9 @@ archivo fuente es [`reportes_rpubs/reporte_completo.Rmd`](reportes_rpubs/reporte
 
 Este repositorio contiene **solo el código**. Los archivos originales de laboratorio y
 las fichas de cata pertenecen al proyecto de caracterización del whisky chileno del
-equipo iBio y su publicación no está autorizada, por lo que no se incluyen. Están
-disponibles **a solicitud a la autora**; las fichas de cata se comparten sin la
-identidad de los catadores. Tampoco se incluyen `data/procesamiento/`,
+equipo iBio y su publicación no está autorizada, por lo que no se incluyen en este
+repositorio público. **El acceso a estos datos queda sujeto a la autorización del equipo
+responsable del proyecto iBio.** Tampoco se incluyen `data/procesamiento/`,
 `data/modelamiento/` ni `outputs/`, porque contienen datos derivados; los scripts las
 vuelven a generar. El archivo [`data/LEEME.md`](data/LEEME.md) indica qué archivos
 espera el código y dónde deben copiarse.
@@ -77,7 +77,8 @@ planilla de salida del script correspondiente.
    directorio no contiene la carpeta `data/`, por lo que normalmente no requiere edición.
 5. Instalar los paquetes de la tabla anterior. El script `00` instala automáticamente los
    paquetes base que falten; el resto se instala con `install.packages()`.
-6. Solicitar los datos a la autora y copiarlos en `data/originales/` con sus nombres
+6. Contar con los datos originales (su acceso queda sujeto a la autorización del equipo
+   responsable del proyecto iBio) y copiarlos en `data/originales/` con sus nombres
    originales, según [`data/LEEME.md`](data/LEEME.md), ya que la clasificación inicial se
    apoya en ellos.
 7. Ejecutar los scripts en orden de numeración, o el flujo completo de una vez con

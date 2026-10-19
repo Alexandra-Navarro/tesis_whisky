@@ -3,8 +3,8 @@
 Los datos de este estudio **no se publican en el repositorio**. Corresponden a los
 resultados de laboratorio y a las fichas de cata del proyecto de caracterización del
 whisky chileno del equipo iBio (*Millennium Institute for Integrative Biology*), y su
-publicación no está autorizada. Están disponibles **a solicitud a la autora**, Alexandra
-Navarro Calderón. Las fichas de cata se comparten sin la identidad de los catadores.
+publicación no está autorizada. **El acceso a estos datos queda sujeto a la autorización
+del equipo responsable del proyecto iBio.**
 
 ## Archivos que espera el código
 
